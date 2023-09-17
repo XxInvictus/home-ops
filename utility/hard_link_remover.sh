@@ -90,7 +90,6 @@ while getopts ":hs:d:pqv" option; do
       ;;
     h | *) Help ;;
   esac
-  #checkArguments "${source}" "${destination}"
 done
 
 [[ ${OPTIND} -eq 1 ]] && Help
