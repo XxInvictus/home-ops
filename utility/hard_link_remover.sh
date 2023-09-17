@@ -94,5 +94,5 @@ while getopts ":hs:d:pqv" option; do
 done
 
 [[ ${OPTIND} -eq 1 ]] && Help
-checkArguments "${source}" "${destination}"
+checkArguments
 main "$@"
