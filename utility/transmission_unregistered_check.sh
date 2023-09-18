@@ -2,7 +2,7 @@
 
 ## Title           :transmission_unregistered_check.sh
 ## Description     :WIP untested script to find and remove unregistered torrents in Transmission
-## Author		       :XxInvictus
+## Author          :XxInvictus
 ## Date            :20230917
 ## Version         :0.1
 
@@ -34,7 +34,7 @@ LOG_LEVEL=3
 ANON_LOGIN=false
 declare -a TRANSOPTS
 declare -a XARGSOPTS
-XARGSOPTS=( -0 --no-run-if-empty )
+XARGSOPTS=( -0 --no-run-if-empty -I {} )
 
 declare -A LOG_LEVELS
 readonly LOG_LEVELS=([0]="FATAL" [1]="ERROR" [2]="WARN" [3]="INFO" [4]="DEBUG" [5]="TRACE")
@@ -49,14 +49,19 @@ function sendlog() {
 
 function checkArguments() {
   sendlog 4 "Checking authentication arguments"
-  if [[ ( -z "${username}" && -z "${password}" ) && ( -z ${netrc} && ! ${ANON_LOGIN} ) ]]; then
+  [[ -n "${username}" ]] && sendlog 4 "Username: ${username}"
+  [[ -n "${password}" ]] && sendlog 4 "Password: *REDACTED*"
+  [[ -n "${netrc}" ]] && sendlog 4 "Netrc: ${netrc}"
+  [[ ${ANON_LOGIN} == true ]] && sendlog 4 "Anon Login: ${ANON_LOGIN}"
+  if [[ ( -z "${username}" && -z "${password}" ) && ( -z "${netrc}" && ${ANON_LOGIN} == false ) ]]; then
     sendlog 1 "No authentication parameters set"
     Help
-  elif [[ ( -n "${username}" || -n "${password}" || ${ANON_LOGIN} ) && -n ${netrc} ]]; then
+  elif [[ ( -n "${username}" || -n "${password}" || ${ANON_LOGIN} == true ) && -n "${netrc}" ]]; then
     sendlog 1 "Cannot mix [-eup] user & pass (inc. env vars) / [-n] netrc / [-a] anonymous login, please use only one"
     Help
-  elif [[ ( -n "${username}" || -n "${password}" || -n ${netrc} ) && ${ANON_LOGIN} ]]; then
+  elif [[ ( -n "${username}" || -n "${password}" || -n "${netrc}" ) && ${ANON_LOGIN} == true ]]; then
     sendlog 1 "Cannot mix [-eup] user & pass (inc. env vars) / [-n] netrc / [-a] anonymous login, please use only one"
+    Help
   fi
   sendlog 2 "Argument check complete"
 }
@@ -64,15 +69,19 @@ function checkArguments() {
 function buildTransOpts() {
   sendlog 4 "Building Transmission options"
   [[ -n "${server}" ]] && TRANSOPTS+=( "${server}" )
-  [[ ${LOG_LEVEL} -ge 4 ]] && TRANSOPTS+=( --debug )
+  # Set debug only for currently unimplemented Trace as it results in ALOT of output on large torrent counts
+  [[ ${LOG_LEVEL} -ge 5 ]] && TRANSOPTS+=( --debug )
   [[ -n "${username}" && -n "${password}" ]] && TRANSOPTS+=( --auth "${username}:${password}" )
-  [[ -n ${netrc} ]] && TRANSOPTS+=( --netrc "${netrc}" )
+  [[ -n "${netrc}" ]] && TRANSOPTS+=( --netrc "${netrc}" )
+  redacted_TRANSOPTS=( "${TRANSOPTS[@]/$password/'*REDACTED*'}" )
+  unset password
+  sendlog 4 "Transmission Opts:" "${redacted_TRANSOPTS[@]}"
   sendlog 4 "Building options complete"
 }
 
 function verifyConnection() {
   sendlog 4 "Verifying Transmission connectivity"
-  connection_test=$(transmission-remote "${TRANSOPTS[@]}" --session-info 2>&1)
+  connection_test="$(transmission-remote "${TRANSOPTS[@]}" --session-info 2>&1)"
   if [[ $? -ge 1 ]]; then
     sendlog 1 "Connection Error, please verify connection options/transmission health and try again"
     sendlog 1 "${connection_test}"
@@ -87,32 +96,42 @@ function verifyConnection() {
 function main() {
   sendlog 4 "### main() Inputs ###"
   sendlog 4 "Server: $server"
+  sendlog 4 "Xargs Opts:" "${XARGSOPTS[@]}"
+  sendlog 4 "Transmission Opts:" "${redacted_TRANSOPTS[@]}"
   sendlog 4 "######"
 
-  # TODO God awful long line, maybe clean up later
+  # TODO [CLEANUP] God awful long line, maybe clean up later
   unregistered_torrents=$(transmission-remote "${TRANSOPTS[@]}" -t all -i \
-    | awk '/^.*Announce error: [Uu]nregistered [Tt]orrent.*$/{gsub(/^[ \t]+|[ \t]+$/, ""); print h " : " j " : " i " : " $0}/^  Id/{h=$2}/^  Name/{$1=""; gsub(/^[ \t]+|[ \t]+$/, ""); i=$0}/^  Percent Done/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); j=$0}')
-  while IFS= read -r -d '' file; do
-    logger 4 "Processing entry ${file}"
-    local torrent_id torrent_percent torrent_name
-    torrent_id=$(echo "${file}" | awk -F ' : ' '{ print $1 }')
-    torrent_percent=$(echo "${file}" | awk -F ' : ' '{ print $2 }')
-    torrent_name=$(echo "${file}" | awk -F ' : ' '{ print $3 }')
+    | awk '/^.*[Uu]nregistered [Tt]orrent.*$/{gsub(/^[ \t]+|[ \t]+$/, ""); print h " : " j " : " i " : " $0}/^  Id/{h=$2}/^  Name/{$1=""; gsub(/^[ \t]+|[ \t]+$/, ""); i=$0}/^  Percent Done/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); j=$0}')
+  sendlog 4 "Unregistered Torrents: >>>>>"
+  sendlog 4 "${unregistered_torrents}"
+  sendlog 4 "<<<<<"
+  while IFS= read -r file; do
+    sendlog 4 "Processing entry ${file}"
+    local torrent_id torrent_percent torrent_name torrent_reason
+    torrent_id="$(echo "${file}" | awk -F ' : ' '{ print $1 }')"
+    torrent_percent="$(echo "${file}" | awk -F ' : ' '{ print $2 }')"
+    torrent_name="$(echo "${file}" | awk -F ' : ' '{ print $3 }')"
+    torrent_reason="$(echo "${file}" | awk -F ' : ' '{ print $4 }')"
+    sendlog 4 "Torrent Id: ${torrent_id}"
+    sendlog 4 "Torrent Percent: ${torrent_percent}"
+    sendlog 4 "Torrent Name: ${torrent_name}"
+    sendlog 4 "Torrent Reason: ${torrent_reason}"
     if [[ "${torrent_percent}" == '100%' ]]; then
-      logger 4 "Removing torrent for ${torrent_name}"
-      echo "${torrent_id}" | xargs "${XARGSOPTS[@]}" transmission-remote "${TRANSOPTS[@]}" -r -t
+      sendlog 4 "Removing torrent for ${torrent_name}"
+      printf "%s" "${torrent_id}" | xargs "${XARGSOPTS[@]}" transmission-remote "${TRANSOPTS[@]}" -t {} -r
     else
-      logger 4 "Removing torrent and files for ${torrent_name}"
-      echo "${torrent_id}" | xargs "${XARGSOPTS[@]}" transmission-remote "${TRANSOPTS[@]}" -rad -t
+      sendlog 4 "Removing torrent and files for ${torrent_name}"
+      printf "%s" "${torrent_id}" | xargs "${XARGSOPTS[@]}" transmission-remote "${TRANSOPTS[@]}" -t {} -rad
     fi
-    logger 3 "Removed torrent and/or files for ${torrent_name}"
-  done <   <(echo "${unregistered_torrents}")
+    sendlog 3 "Removed torrent and/or files for ${torrent_name}"
+  done < <(echo "${unregistered_torrents}")
 }
 
 
 while getopts ":hs:aen:u:p::cqv" option; do
   case "${option}" in
-    s) server=$OPTARG ;;
+    s) server="${OPTARG}" ;;
     a) ANON_LOGIN=true ;;
     e)
       if [[ -z "${TRANSMISSION_USER}" || -z "${TRANSMISSION_PASS}" ]]; then
@@ -122,13 +141,14 @@ while getopts ":hs:aen:u:p::cqv" option; do
       username="${TRANSMISSION_USER}"
       password="${TRANSMISSION_PASS}"
       ;;
-    n) netrc=$OPTARG ;;
-    u) username=$OPTARG ;;
+    n) netrc="${OPTARG}" ;;
+    u) username="${OPTARG}" ;;
     p)
-      if [[ -z $OPTARG ]]; then
+      # TODO [FIX] prompt when no password supplied doesn't work
+      if [[ -z "${OPTARG}" ]]; then
         IFS= read -r -p "Enter your password: "$'\n' -s password
       else
-        password=$OPTARG
+        password="${OPTARG}"
       fi
       [[ -z "${password}" ]] && sendlog 1 "Password not provided" && Help
       ;;
