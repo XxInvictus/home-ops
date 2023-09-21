@@ -110,7 +110,7 @@ function main() {
 
   # TODO [CLEANUP] God awful long line, maybe clean up later
   unregistered_torrents=$(transmission-remote "${TRANSOPTS[@]}" -t all -i \
-    | awk '/^.*[Uu]nregistered [Tt]orrent.*$/{gsub(/^[ \t]+|[ \t]+$/, ""); print h " : " k " : " j " : " i " : " $0}/^  Id/{h=$2}/^  Name/{$1=""; gsub(/^[ \t]+|[ \t]+$/, ""); i=$0}/^  Percent Done/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); j=$0/^  Date added/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); k=$0}')
+    | awk '/^.*[Uu]nregistered [Tt]orrent.*$/{gsub(/^[ \t]+|[ \t]+$/, ""); print h " : " k " : " j " : " i " : " $0}/^  Id/{h=$2}/^  Name/{$1=""; gsub(/^[ \t]+|[ \t]+$/, ""); i=$0}/^  Percent Done/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); j=$0}/^  Date added/{$1=""; $2=""; gsub(/^[ \t]+|[ \t]+$/, ""); k=$0}')
   sendlog 4 'Unregistered Torrents: >>>>>'
   sendlog 4 "${unregistered_torrents}"
   sendlog 4 '<<<<<'
@@ -148,7 +148,7 @@ function main() {
 }
 
 
-while getopts ":hs:aen:u:p::ocqv" option; do
+while getopts ":hs:aen:u:p::o:cqv" option; do
   case "${option}" in
     s) server="${OPTARG}" ;;
     a) ANON_LOGIN=true ;;
