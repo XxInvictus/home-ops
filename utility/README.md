@@ -1,7 +1,8 @@
 ### hard_link_remover.sh
 
 Script to remove a file (or all files in a folder) and search a specified directory/subdirectories for any Hard Links to
-the file/files removing them also.
+the file/files removing them also.  
+
 ---
 
 ### transmission_unregistered_check.sh
