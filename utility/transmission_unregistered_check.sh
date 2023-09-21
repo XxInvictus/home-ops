@@ -27,7 +27,7 @@ function Help()
   echo "n     Netrc file for login"
   echo "u     Manual username for login (will take precedence over -e environment variables)"
   echo "p     Manual password for login (will take precedence over -e environment variables)"
-  echo "o     Offset time in seconds to wait after a torrent is added before considering it for removal"
+  echo "o     Offset time in seconds to wait after a torrent is added before considering it for removal (default 86400/1-day)"
   echo "c     Confirmation prompt before removing torrent/torrent+files"
   echo "q     Quiet Output"
   echo "v     Verbose Output"
@@ -127,11 +127,13 @@ function main() {
     sendlog 4 'Torrent Percent:' "${torrent_percent}"
     sendlog 4 'Torrent Name:' "${torrent_name}"
     sendlog 4 'Torrent Reason:' "${torrent_reason}"
-    torrent_date_as_epoch=$(date -d "${torrent_date_added}" +"%s")
-    offset_date=$(date -d "-${OFFSET} seconds" +"%s")
-    if [[ ${torrent_date_as_epoch} -ge ${offset_date} ]]; then
-      sendlog 4 'Skipping' "${torrent_name}" 'with date' "${torrent_date_as_epoch}" 'newer than' "${offset_date}"
-      continue
+    if [[ "${OFFSET}" != '0' ]]; then
+      torrent_date_as_epoch=$(date -d "${torrent_date_added}" +"%s")
+      offset_date=$(date -d "-${OFFSET} seconds" +"%s")
+      if [[ ${torrent_date_as_epoch} -ge ${offset_date} ]]; then
+        sendlog 4 'Skipping' "${torrent_name}" 'with date' "${torrent_date_as_epoch}" 'newer than' "${offset_date}"
+        continue
+      fi
     fi
     if [[ "${torrent_percent}" == '100%' ]]; then
       sendlog 4 'Removing torrent for' "${torrent_name}"
