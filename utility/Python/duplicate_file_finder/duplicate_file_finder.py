@@ -17,21 +17,26 @@ Modified by XxInvictus for:
     - verbose output
 """
 import argparse
+import base64
 import csv
+import hashlib
 import os
 import sys
-import hashlib
 from collections import defaultdict
 from inspect import getmembers, isfunction
+from itertools import repeat
+from multiprocessing.pool import ThreadPool
 from pathlib import Path
 
+parallel_threads = 5
+parallel_chunksize = 10
 
 def validate_arguments():
-    validate_source()
-    validate_destinations()
-    validate_input()
-    validate_output()
-    validate_test()
+    if args.source: validate_source()
+    if args.destinations: validate_destinations()
+    if args.input: validate_input()
+    if args.output: validate_output()
+    if args.test: validate_test()
     # No need to validate purge and dry-run as they are boolean flags
     # No need to validate log file as it can be any file path
     # No need to validate verbose as it is a boolean flag
@@ -42,6 +47,7 @@ def validate_arguments():
 def validate_source():
     # Check if source is provided and is a valid path
     if args.source:
+        #for source in args.source:
         if not os.path.exists(args.source):
             raise ValueError(f"Source path '{args.source}' does not exist.")
         if not os.path.isdir(args.source) and not os.path.isfile(args.source):
@@ -116,19 +122,29 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     return hashobj.digest()
 
 
+def multi_hash(filename, first_chunk_only=False):
+    try:
+        file_hash = get_hash(filename, first_chunk_only)
+    except OSError:
+        file_hash = None
+    return filename, file_hash
+
+
 def get_source_files():
     sources = []
     if args.source:
-        sources = args.source
+        sources = [args.source]
     elif args.input:
         with open(args.input, newline='') as csvfile:
             csvreader = csv.reader(csvfile)
             sources = [row[0] for row in csvreader]
+    else:
+        raise ValueError("No source provided.")
     source_files = []
     for source in sources:
         try:
             if os.path.isdir(source):
-                for dirpath, _, filenames in os.walk(source):
+                for dirpath, _, filenames in Path(source).walk():
                     for filename in filenames:
                         full_path = os.path.join(dirpath, filename)
                         try:
@@ -146,9 +162,9 @@ def get_source_files():
 def find_duplicates_by_size(paths):
     source_files = get_source_file_sizes()
     source_matches = []
-    files_by_size = defaultdict(dict)
+    files_by_size = defaultdict(list)
     for path in paths:
-        for dirpath, _, filenames in os.walk(path):
+        for dirpath, _, filenames in Path(path).walk():
             for filename in filenames:
                 full_path = os.path.join(dirpath, filename)
                 try:
@@ -160,17 +176,20 @@ def find_duplicates_by_size(paths):
                     # not accessible (permissions, etc) - pass on
                     continue
                 if file_size in source_files.keys():
-                    source_matches.append = source_files[file_size][0]
+                    source_matches.append(source_files[file_size][0])
                     if len(files_by_size[file_size]) == 0:
-                        files_by_size[file_size] = {}
-                    files_by_size[file_size][full_path] = None
+                        files_by_size[file_size] = []
+                    if source_files[file_size][0] not in files_by_size[file_size]:
+                        files_by_size[file_size].append(source_files[file_size][0])
+                    files_by_size[file_size].append(full_path)
                 # files_by_size[file_size].append(full_path)
+    print(files_by_size)
     return source_matches, files_by_size
 
 
 def get_source_file_sizes():
     source_sizes = defaultdict(list)
-    for dirpath, _, filenames in os.walk(args.source):
+    for dirpath, _, filenames in Path(args.source).walk():
         for filename in filenames:
             full_path = os.path.join(dirpath, filename)
             try:
@@ -185,26 +204,34 @@ def get_source_file_sizes():
 def find_duplicates_by_small_hash(source_files, files_by_size):
     source_small_hashes = defaultdict(list)
     source_matches = []
-    for file in source_files:
-        source_small_hashes[get_hash(file, first_chunk_only=True)].append(file)
-    files_by_small_hash = defaultdict(dict)
+    print("## GETTING SOURCE SMALL HASHES ##")
+    with ThreadPool(parallel_threads) as parallel_pool:
+        for result in parallel_pool.starmap(multi_hash, zip(source_files, repeat(True)), chunksize=parallel_chunksize):
+            full_hash = base64.b64encode(result[1])
+            if not result[1]:
+                continue
+            source_small_hashes[full_hash].append(result[0])
+    files_by_small_hash = defaultdict(list)
     # For all files with the same file size, get their hash on the first 1024 bytes
+    print("## GETTING DUPE SMALL HASHES ##")
     for file_size, files in files_by_size.items():
         if len(files) < 2:
             continue  # this file size is unique, no need to spend cpu cycles on it
-
-        for filename in files:
-            try:
-                small_hash = get_hash(filename, first_chunk_only=True)
-            except OSError:
-                # the file access might've changed till the exec point got here
-                continue
+        hash_list = []
+        with ThreadPool(parallel_threads) as parallel_pool:
+            for result in parallel_pool.starmap(multi_hash, zip(files, repeat(True)), chunksize=parallel_chunksize):
+                full_hash = base64.b64encode(result[1])
+                if not result[1]:
+                    continue
+                hash_list.append((result[0], full_hash))
+        for filename, small_hash in hash_list:
             if small_hash in source_small_hashes.keys():
-                source_matches.append = source_small_hashes[small_hash][0]
+                if source_small_hashes[small_hash][0] not in source_matches:
+                    source_matches.append(source_small_hashes[small_hash][0])
                 if len(files_by_small_hash[(file_size, small_hash)]) == 0:
-                    files_by_small_hash[(file_size, small_hash)] = {}
-                files_by_small_hash[(file_size, small_hash)][filename] = None
-            # files_by_small_hash[(file_size, small_hash)].append(filename)
+                    files_by_small_hash[(file_size, small_hash)] = []
+                files_by_small_hash[(file_size, small_hash)].append(filename)
+    print(files_by_small_hash)
     return source_matches, files_by_small_hash
 
 
@@ -212,23 +239,30 @@ def find_duplicates_by_full_hash(source_files, files_by_small_hash):
     # For all files with the hash on the first 1024 bytes, get their hash on the full
     # file - collisions will be duplicates
     source_full_hashes = defaultdict(list)
+    print(source_files)
     source_by_hash = {}
     source_by_filename = {}
-    for file in source_files:
-        source_full_hashes[get_hash(file, first_chunk_only=False)].append(file)
+    print("## GETTING SOURCE FULL HASHES ##")
+    with ThreadPool(parallel_threads) as parallel_pool:
+        for result in parallel_pool.imap(multi_hash, source_files, chunksize=parallel_chunksize):
+            full_hash = base64.b64encode(result[1])
+            if not result[1]:
+                continue
+            source_full_hashes[full_hash].append(result[0])
     files_by_full_hash = defaultdict(dict)
+    print("## GETTING DUPE FULL HASHES ##")
     for files in files_by_small_hash.values():
         if len(files) < 2:
             # the hash of the first 1k bytes is unique -> skip this file
             continue
-
-        for filename in files:
-            try:
-                full_hash = get_hash(filename, first_chunk_only=False)
-            except OSError:
-                # the file access might've changed till the exec point got here
-                continue
-
+        hash_list = []
+        with ThreadPool(parallel_threads) as parallel_pool:
+            for result in parallel_pool.imap(multi_hash, files, chunksize=parallel_chunksize):
+                full_hash = base64.b64encode(result[1])
+                if not result[1]:
+                    continue
+                hash_list.append((result[0], full_hash))
+        for filename, full_hash in hash_list:
             # Add this file to the list of others sharing the same full hash
             if full_hash in source_full_hashes.keys():
                 source_by_hash[full_hash] = source_full_hashes[full_hash][0]
@@ -236,8 +270,6 @@ def find_duplicates_by_full_hash(source_files, files_by_small_hash):
                 if len(files_by_full_hash[full_hash]) == 0:
                     files_by_full_hash[full_hash] = {}
                 files_by_full_hash[full_hash][filename] = None
-                print(files_by_full_hash.values())
-            # files_by_full_hash[full_hash].append(filename)
     return source_by_hash, source_by_filename, files_by_full_hash
 
 
@@ -266,17 +298,24 @@ def print_to_console(source_files, files_by_full_hash):
 
 
 def check_for_duplicates():
-
+    global parallel_threads, parallel_chunksize
+    if args.parallel_threads: parallel_threads = args.parallel_threads
+    if args.parallel_chunksize: parallel_chunksize = args.parallel_chunksize
+    print("### GETTING SOURCE FILES ###")
     original_source_files = get_source_files()
-    source_files, files_by_size = find_duplicates_by_size(paths)
+    print("### FINDING DUPES BY SIZE ###")
+    source_files, files_by_size = find_duplicates_by_size(args.destinations)
     if len(files_by_size) == 0:
         raise ValueError("No duplicates by size found.")
+    print("### FINDING DUPES BY SMALL HASH ###")
     source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size)
     if len(files_by_small_hash) == 0:
         raise ValueError("No duplicates by small hash found.")
+    print("### FINDING DUPES BY FULL HASH ###")
     source_by_hash, source_by_filename, files_by_full_hash = find_duplicates_by_full_hash(source_files, files_by_small_hash)
     if len(files_by_full_hash) == 0:
         raise ValueError("No duplicates by full hash found.")
+    print("### PRINTING TO CONSOLE ###")
     print_to_console(source_by_hash, files_by_full_hash)
 
     if args.remove or args.purge:
@@ -301,6 +340,9 @@ def check_for_duplicates():
 
 
 def test_function():
+    test_single_file = "test_file.txt"
+    #test_multiple_files = ["test_file1.txt", "test_file2.txt", "test_file3.txt"]
+    test_mixed_files_dirs = ["test_file1.txt", "test_file2.txt", "test_dir/test_file3.txt"]
     for func in args.functions:
         print(f"Testing function: {func}")
         match func:
@@ -310,9 +352,9 @@ def test_function():
                 eval(func)(source_files, files_by_full_hash)
             case "get_hash":
                 try:
-                    with open ("test_file.txt", "w") as f:
+                    with open (test_single_file, "w") as f:
                         f.write("This is a test file.")
-                    hash_output = eval(func)("test_file.txt", first_chunk_only=True, hash_algo=hashlib.sha1)
+                    hash_output = eval(func)(test_single_file, first_chunk_only=True, hash_algo=hashlib.sha1)
                     print(hash_output)
                     if hash_output != b'&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k':
                         raise ValueError("Hash output does not match expected output.")
@@ -322,17 +364,16 @@ def test_function():
                     print(f"[FAIL] {e}")
                 finally:
                     try:
-                        os.remove("test_file.txt")
+                        os.remove(test_single_file)
                     except OSError:
                         pass
             case "chunk_reader":
                 print("Chunk reader is intended for use in get_hash function and not intended to test independently.")
             case "get_source_files":
-                test_files = ["test_file1.txt", "test_file2.txt", "test_dir/test_file3.txt"]
                 try:
                     print("Generating test files for source files.")
                     test_paths = []
-                    for file in test_files:
+                    for file in test_mixed_files_dirs:
                         try:
                             Path(os.path.dirname(file)).mkdir(parents=True, exist_ok=True)
                             test_paths.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), file))
@@ -347,7 +388,7 @@ def test_function():
                 except Exception as e:
                     print(f"[FAIL] {e}")
                 finally:
-                    for file in test_files:
+                    for file in test_mixed_files_dirs:
                         try:
                             os.remove(file)
                         except OSError:
@@ -367,17 +408,21 @@ if __name__ == "__main__":
     )
     parser.add_argument('--source', '-s', help='Source file/folder(s) to find duplicates of.')
     parser.add_argument('--destinations', '-d', nargs='*', help='Destination file/folder(s) to search for duplicates.')
-    parser.add_argument('--input', '-i', help='Input CSV file with list of files to search for duplicates.')
-    parser.add_argument('--output', '-o', help='Output CSV file with list of duplicates.')
+    parser.add_argument('--input', '-i', type=str, help='Input CSV file with list of files to search for duplicates.')
+    parser.add_argument('--output', '-o', type=str, help='Output CSV file with list of duplicates.')
     parser.add_argument('--remove', '-r', action='store_true', help='Remove duplicates.')
     parser.add_argument('--purge', '-p', action='store_true', help='Purge original and duplicates.')
     parser.add_argument('--dry-run', '-n', action='store_true', help='Dry run.')
-    parser.add_argument('--log', '-l', help='Log file to output results.')
+    parser.add_argument('--log', '-l', type=str, help='Log file to output results.')
     parser.add_argument('--verbose', '-v', action='store_true', help='Verbose output.')
-    parser.add_argument('--test', '-t', action='store_true', help='Test mode. Only used with --functions.')
+    parser.add_argument('--test', action='store_true', help='Test mode. Only used with --functions.')
     parser.add_argument('--functions', '-f', nargs='*', help='Functions to test with --test.')
+    parser.add_argument('--parallel-threads', '-t', type=int, help='Number of parallel threads to use.')
+    parser.add_argument('--parallel-chunksize', '-c', type=int, help='Chunk size for parallel processing.')
     args = parser.parse_args()
 
     validate_arguments()
-    test_function()
-    #check_for_duplicates()
+    if args.test:
+        test_function()
+    else:
+        check_for_duplicates()
