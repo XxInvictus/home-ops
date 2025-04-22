@@ -28,10 +28,7 @@ import csv
 import hashlib
 import yaml
 import logging.config
-import os
-import sys
 from collections import defaultdict
-from inspect import getmembers, isfunction
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -44,8 +41,14 @@ with open('logconf.yaml', 'rt') as f:
 logging.config.dictConfig(config)
 logger = logging.getLogger()
 
-parallel_threads = 5
-parallel_chunksize = 10
+def log_and_raise_error(message):
+    """
+    Logs an error message and raises a ValueError.
+    :param message: The error message to log and raise.
+    """
+    logger.error(message)
+    raise ValueError(message)
+
 
 def validate_arguments():
     """
@@ -54,11 +57,9 @@ def validate_arguments():
     """
     logger.info("Validating arguments...")
     if args.source:
-        validate_source()
+        validate_path(args.source, "source")
     if args.destinations:
-        validate_destinations()
-    if args.mode:
-        validate_mode()
+        validate_path(args.destinations, "destination")
     if args.input:
         validate_input()
     if args.output:
@@ -68,32 +69,21 @@ def validate_arguments():
 
     logger.info("All arguments are valid.")
 
-def validate_source():
-    """
-    Validates the source path provided in the arguments.
-    Ensures the path exists and is a valid file or directory.
-    """
-    if args.source:
-        if not os.path.exists(args.source):
-            logger.error(f"Source path '{args.source}' does not exist.")
-            raise ValueError(f"Source path '{args.source}' does not exist.")
-        if not os.path.isdir(args.source) and not os.path.isfile(args.source):
-            logger.error(f"Source path '{args.source}' is not a valid file or directory.")
-            raise ValueError(f"Source path '{args.source}' is not a valid file or directory.")
 
-def validate_destinations():
+def validate_path(path_list, path_type):
     """
-    Validates the destination paths provided in the arguments.
-    Ensures each path exists and is a valid file or directory.
+    Validates a list of paths to ensure they exist and are valid.
+
+    :param path_list: List of paths to validate.
+    :param path_type: Type of path ('source' or 'destination').
     """
-    if args.destinations:
-        for dest in args.destinations:
-            if not os.path.exists(dest):
-                logger.error(f"Destination path '{dest}' does not exist.")
-                raise ValueError(f"Destination path '{dest}' does not exist.")
-            if not os.path.isdir(dest) and not os.path.isfile(dest):
-                logger.error(f"Destination path '{dest}' is not a valid file or directory.")
-                raise ValueError(f"Destination path '{dest}' is not a valid file or directory.")
+    for path in path_list:
+        path_obj = Path(path)
+        if not path_obj.exists():
+            log_and_raise_error(f"{path_type.capitalize()} path '{path}' does not exist.")
+        if not path_obj.is_dir() and not path_obj.is_file():
+            log_and_raise_error(f"{path_type.capitalize()} path '{path}' is not a valid file or directory.")
+
 
 def validate_input():
     """
@@ -102,24 +92,20 @@ def validate_input():
     """
     if args.input:
         if not args.input.endswith('.csv'):
-            logger.error(f"Input file '{args.input}' must have a .csv extension.")
-            raise ValueError(f"Input file '{args.input}' must have a .csv extension.")
-        if not os.path.isfile(args.input):
-            logger.error(f"Input file '{args.input}' does not exist.")
-            raise ValueError(f"Input file '{args.input}' does not exist.")
+            log_and_raise_error(f"Input file '{args.input}' must have a .csv extension.")
+        if not Path(args.input).is_file():
+            log_and_raise_error(f"Input file '{args.input}' does not exist.")
         with open(args.input, newline='') as csvfile:
             csvreader = csv.reader(csvfile)
             for row in csvreader:
                 if len(row) != 1:
-                    logger.error(f"Input CSV file '{args.input}' must have exactly one column per row.")
-                    raise ValueError(f"Input CSV file '{args.input}' must have exactly one column per row.")
+                    log_and_raise_error(f"Input CSV file '{args.input}' must have exactly one column per row.")
                 path = row[0]
-                if not os.path.exists(path):
-                    logger.error(f"Path '{path}' in input CSV does not exist.")
-                    raise ValueError(f"Path '{path}' in input CSV does not exist.")
-                if not os.path.isdir(path) and not os.path.isfile(path):
-                    logger.error(f"Path '{path}' in input CSV is not a valid file or directory.")
-                    raise ValueError(f"Path '{path}' in input CSV is not a valid file or directory.")
+                if not Path(path).exists():
+                    log_and_raise_error(f"Path '{path}' in input CSV does not exist.")
+                if not Path(path).is_dir() and not Path(path).is_file():
+                    log_and_raise_error(f"Path '{path}' in input CSV is not a valid file or directory.")
+
 
 def validate_output():
     """
@@ -127,31 +113,26 @@ def validate_output():
     Ensures the file has a .csv extension.
     """
     if args.output and not args.output.endswith('.csv'):
-        logger.error(f"Output file '{args.output}' must have a .csv extension.")
-        raise ValueError(f"Output file '{args.output}' must have a .csv extension.")
+        log_and_raise_error(f"Output file '{args.output}' must have a .csv extension.")
 
-def validate_mode():
-    """
-    Validates the mode of operation provided in the arguments.
-    Ensures the mode is one of the accepted options: 'hash', 'combined', or 'inode'.
-    """
-    valid_modes = ['hash', 'combined', 'inode']
-    if args.mode and args.mode not in valid_modes:
-        logger.error(f"Invalid mode '{args.mode}'. Accepted options are: {', '.join(valid_modes)}.")
-        raise ValueError(f"Invalid mode '{args.mode}'. Accepted options are: {', '.join(valid_modes)}.")
 
 def validate_test():
     """
     Validates the test mode arguments.
     Ensures that functions provided for testing are valid and exist in the script.
     """
-    logger.debug(f"Validating test functions: {args.functions}")
+    import sys
+    from inspect import getmembers, isfunction
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Validating test functions: {args.functions}")
     if args.test and not args.functions:
-        logger.error("Test mode requires functions to be provided.")
-        raise ValueError("Test mode requires functions to be provided.")
-    if not all(x in [o[0] for o in getmembers(sys.modules[__name__]) if isfunction(o[1])] for x in args.functions):
-        logger.error("All functions provided for testing are not valid.")
-        raise ValueError("All functions provided for testing are not valid.")
+        log_and_raise_error("Test mode requires functions to be provided.")
+    if not all(x in [o[0] for o in getmembers(sys.modules[__name__]) if isfunction(o[1])] + [
+        "complete_full_hash",
+        "complete_combined_inode",
+        "complete_inode"
+    ] for x in args.functions):
+        log_and_raise_error("All functions provided for testing are not valid.")
 
 
 def chunk_reader(fobj, chunk_size=1024):
@@ -162,11 +143,13 @@ def chunk_reader(fobj, chunk_size=1024):
     :param chunk_size: Size of each chunk in bytes.
     :yield: A chunk of the file.
     """
-    logger.debug(f"Reading file in chunks of size {chunk_size}.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Reading file in chunks of size {chunk_size}.")
     while True:
         chunk = fobj.read(chunk_size)
         if not chunk:
-            logger.debug("End of file reached.")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("End of file reached.")
             return
         yield chunk
 
@@ -180,7 +163,8 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     :param hash_algo: Hashing algorithm to use.
     :return: The calculated hash as a byte string.
     """
-    logger.info(f"Calculating hash for file: {filename}, first_chunk_only={first_chunk_only}.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Calculating hash for file: {filename}, first_chunk_only={first_chunk_only}.")
     hashobj = hash_algo()
     try:
         with open(filename, "rb") as f:
@@ -189,7 +173,8 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
             else:
                 for chunk in chunk_reader(f):
                     hashobj.update(chunk)
-        logger.debug(f"Hash calculated successfully for file: {filename}.")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Hash calculated successfully for file: {filename}.")
     except OSError as e:
         logger.error(f"Error reading file {filename}: {e}")
         raise
@@ -204,14 +189,86 @@ def multi_hash(filename, first_chunk_only=False):
     :param first_chunk_only: If True, only the first chunk of the file is hashed.
     :return: A tuple containing the filename and its hash.
     """
-    logger.info(f"Calculating hash for file: {filename}, first_chunk_only={first_chunk_only}")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Calculating hash for file: {filename}, first_chunk_only={first_chunk_only}")
     try:
         file_hash = get_hash(filename, first_chunk_only)
-        logger.debug(f"Hash for file {filename}: {file_hash}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Hash for file {filename}: {file_hash}")
     except OSError as e:
         logger.error(f"Error calculating hash for file {filename}: {e}")
         file_hash = None
     return filename, file_hash
+
+
+def generate_hash_list_with_pool(pool, first_chunk, input_files, output_format="set"):
+    """
+    Generates a list of b64 encoded hashes for the given files using a thread pool.
+
+    :param pool: ThreadPool for parallel processing.
+    :param first_chunk: Whether the hash is first chunk only.
+    :param input_files: List of files to process.
+    :param output_format: Format of the output ('set' or 'dict').
+    :return: A set of sets containing file b64-encoded hashes and their corresponding filenames.
+    """
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Generating hash list with pool for processing.")
+    hash_set = set()
+    processing_pool = pool.starmap(
+        multi_hash, zip(input_files, repeat(first_chunk)), chunksize=args.parallel_chunksize
+    )
+
+    for result in processing_pool:
+        if not result[1]:
+            continue
+        base64_hash = base64.b64encode(result[1])
+        hash_set.add((result[0], base64_hash))
+
+    if output_format == "dict":
+        hash_dict = defaultdict(set)
+        logger.debug(list(hash_set))
+        for filename, hash_value in hash_set:
+            hash_dict[hash_value].add(filename)
+        hash_output = hash_dict
+    else:
+        hash_output = hash_set
+
+    return hash_output
+
+
+def build_files_by_hash_output(source_hash_inode_list, destination_hash_inode_list):
+    """
+    Builds a dictionary of files grouped by their hashes.
+
+    :param source_hash_inode_list: List of source files with their hashes.
+    :param destination_hash_inode_list: List of destination files with their hashes.
+    :param source_matches: List of source files that have duplicates.
+    :return: A dictionary mapping hashes to lists of filenames.
+    """
+    logger.debug(source_hash_inode_list)
+    logger.debug(destination_hash_inode_list)
+    logger.info("Building files by hash output.")
+    files_by_hash_inode = defaultdict(lambda: defaultdict(set))
+    source_matches = []
+    for filename, destination_hash_inode_value in destination_hash_inode_list:
+        if destination_hash_inode_value in source_hash_inode_list:
+            for source_file in source_hash_inode_list[destination_hash_inode_value]:
+                if source_file not in source_matches:
+                    source_matches.append(source_file)
+                files_by_hash_inode[destination_hash_inode_value][source_file].add(filename)
+    logger.info(f"Built {len(files_by_hash_inode)} groups of files by hash.")
+    return source_matches, files_by_hash_inode
+
+
+def traverse_directory(directory, recurse_symlinks=True):
+    """
+    Traverses a directory and retrieves all file paths.
+
+    :param directory: Path to the directory.
+    :param recurse_symlinks: Whether to follow symbolic links.
+    :return: List of file paths.
+    """
+    return [entry.resolve(strict=True) for entry in Path(directory).rglob('*', recurse_symlinks=recurse_symlinks) if entry.is_file()]
 
 
 def get_source_files():
@@ -221,41 +278,31 @@ def get_source_files():
     :return: A list of source file paths.
     """
     logger.info("Retrieving source files.")
-    sources = []
     if args.source:
-        sources = [args.source]
+        sources = args.source
     elif args.input:
         logger.info(f"Reading sources from input CSV: {args.input}.")
         with open(args.input, newline='') as csvfile:
             csvreader = csv.reader(csvfile)
             sources = [row[0] for row in csvreader]
     else:
-        logger.error("No source provided.")
-        raise ValueError("No source provided.")
+        log_and_raise_error("No source provided.")
 
     source_files = []
     for source in sources:
         try:
-            if os.path.isdir(source):
-                logger.debug(f"Walking through directory: {source}.")
-                for dirpath, _, filenames in Path(source).walk():
-                    for filename in filenames:
-                        full_path = os.path.join(dirpath, filename)
-                        try:
-                            full_path = os.path.realpath(full_path)
-                        except OSError as e:
-                            logger.warning(f"Failed to resolve real path for {full_path}: {e}")
-                            continue
-                        source_files.append(full_path)
-            elif os.path.isfile(source):
-                source_files.append(os.path.realpath(source))
+            source_path = Path(source)
+            if source_path.is_dir():
+                source_files.extend(traverse_directory(source_path))
+            elif source_path.is_file():
+                source_files.append(source_path.resolve(strict=True))
         except Exception as e:
             logger.error(f"Failed to get source files from {source}: {e}")
     logger.info(f"Retrieved {len(source_files)} source files.")
     return source_files
 
 
-def find_duplicates_by_size(paths):
+def find_duplicates_by_size(source_list, destination_list):
     """
     Finds duplicate files based on their sizes.
 
@@ -263,32 +310,42 @@ def find_duplicates_by_size(paths):
     :return: A tuple containing source matches and a dictionary of files grouped by size.
     """
     logger.info("Finding duplicates by file size.")
-    source_files = get_source_file_sizes()
+    source_files = get_source_file_sizes(source_list)
     source_matches = []
-    files_by_size = defaultdict(list)
-    for path in paths:
-        logger.debug(f"Processing path: {path}.")
-        for dirpath, _, filenames in Path(path).walk():
-            for filename in filenames:
-                full_path = os.path.join(dirpath, filename)
-                try:
-                    full_path = os.path.realpath(full_path)
-                    file_size = os.path.getsize(full_path)
-                except OSError as e:
-                    logger.warning(f"Failed to access file {full_path}: {e}")
-                    continue
-                if file_size in source_files.keys():
-                    source_matches.append(source_files[file_size][0])
-                    if len(files_by_size[file_size]) == 0:
-                        files_by_size[file_size] = []
-                    if source_files[file_size][0] not in files_by_size[file_size]:
-                        files_by_size[file_size].append(source_files[file_size][0])
-                    files_by_size[file_size].append(full_path)
+    full_paths = []
+    files_by_size = defaultdict(lambda: defaultdict(list))
+    for destination in destination_list:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Processing destination: {destination}.")
+        try:
+            if Path(destination).is_file():
+                full_paths.append(Path(destination).resolve(strict=True))
+            elif Path(destination).is_dir():
+                for dirpath, _, filenames in Path(destination).walk(on_error=print):
+                    for filename in filenames:
+                        full_path = Path.joinpath(dirpath, filename)
+                        full_paths.append(full_path.resolve(strict=True))
+        except OSError as e:
+            logger.warning(f"Failed to access file {destination} for realpath: {e}")
+    logger.info(f"Retrieved {len(full_paths)} destination files for size calculation.")
+    for full_path in full_paths:
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Getting size for file: {full_path}.")
+        file_size = Path(full_path).stat().st_size
+        if file_size in source_files.keys():
+            for source_file in source_files[file_size]:
+                source_matches.append(source_file)
+                files_by_size[file_size][source_file].append(str(full_path))
     logger.info(f"Found {len(files_by_size)} file groups with duplicate sizes.")
+    if len(files_by_size) == 0:
+        log_and_raise_error("No duplicates by size found.")
     return source_matches, files_by_size
 
+# source_matches syntax is [sourcefile1, sourcefile2]
+# files_by_size syntax is {size: {original: [duplicates]}}
 
-def get_source_file_sizes():
+
+def get_source_file_sizes(source_list):
     """
     Retrieves file sizes from the source directory.
 
@@ -296,103 +353,88 @@ def get_source_file_sizes():
     """
     logger.info("Retrieving file sizes from source directory.")
     source_sizes = defaultdict(list)
-    for dirpath, _, filenames in Path(args.source).walk():
-        for filename in filenames:
-            full_path = os.path.join(dirpath, filename)
-            try:
-                full_path = os.path.realpath(full_path)
-                file_size = os.path.getsize(full_path)
-                source_sizes[file_size].append(full_path)
-                logger.debug(f"File: {full_path}, Size: {file_size}")
-            except OSError as e:
-                logger.warning(f"Failed to access file {full_path}: {e}")
+
+    for source in source_list:
+        try:
+            source_path = Path(source)
+            if source_path.is_file():
+                source_sizes[source_path.stat().st_size].append(str(source_path.resolve(strict=True)))
+            elif source_path.is_dir():
+                for entry in traverse_directory(source_path):
+                    source_sizes[entry.stat().st_size].append(str(entry))
+        except OSError as e:
+            logger.warning(f"Failed to access file {source} for realpath: {e}")
     logger.info(f"Retrieved sizes for {len(source_sizes)} unique file sizes.")
     return source_sizes
 
 
-def find_duplicates_by_small_hash(source_files, files_by_size):
+def find_duplicates_by_small_hash(source_files, files_by_size, pool):
     """
     Finds duplicate files based on their small hash values.
 
     :param source_files: List of source file paths.
     :param files_by_size: Dictionary of files grouped by size.
+    :param pool: ThreadPool for parallel processing.
     :return: A tuple containing source matches and a dictionary of files grouped by small hash.
     """
+    # source_matches syntax is {size: [sourcefile1, sourcefile2]}
+    # files_by_size syntax is {size: {original: [duplicates]}}
     logger.info("Finding duplicates by small hash.")
-    source_small_hashes = defaultdict(list)
-    source_matches = []
-
     logger.info("Calculating small hashes for source files.")
-    with ThreadPool(parallel_threads) as parallel_pool:
-        for result in parallel_pool.starmap(multi_hash, zip(source_files, repeat(True)), chunksize=parallel_chunksize):
-            if not result[1]:
-                continue
-            full_hash = base64.b64encode(result[1])
-            source_small_hashes[full_hash].append(result[0])
+    source_small_hashes = generate_hash_list_with_pool(pool, True, source_files, "dict")
 
-    files_by_small_hash = defaultdict(list)
+    files_by_small_hash = defaultdict(lambda: defaultdict(set))
     logger.info("Calculating small hashes for destination files.")
-    for file_size, files in files_by_size.items():
-        if len(files) < 2:
-            continue
-        hash_list = []
-        with ThreadPool(parallel_threads) as parallel_pool:
-            for result in parallel_pool.starmap(multi_hash, zip(files, repeat(True)), chunksize=parallel_chunksize):
-                if not result[1]:
-                    continue
-                full_hash = base64.b64encode(result[1])
-                hash_list.append((result[0], full_hash))
-        for filename, small_hash in hash_list:
-            if small_hash in source_small_hashes:
-                if source_small_hashes[small_hash][0] not in source_matches:
-                    source_matches.append(source_small_hashes[small_hash][0])
-                files_by_small_hash[(file_size, small_hash)].append(filename)
 
-    logger.info(f"Found {len(files_by_small_hash)} groups of duplicates by small hash.")
+    for file_size, files in files_by_size.items():
+        if len(files) == 0:
+            continue
+        destination_hash_list = set()
+        for size_matched_files in files.values():
+            if len(size_matched_files) == 0:
+                continue
+            destination_hashes = generate_hash_list_with_pool(pool, True, size_matched_files)
+            destination_hash_list.update(destination_hashes)
+            source_matches, files_by_small_hash = build_files_by_hash_output(source_small_hashes, destination_hash_list)
+
+    logger.info(
+        f"Found {len(files_by_small_hash.items())} groups of duplicates by small hash."
+    )
+    # source_matches format is [filename]
+    # files_by_small_hash format is {small_hash: {source_file: [filename1, filename2]}}
+    if len(files_by_small_hash) == 0:
+        log_and_raise_error("No duplicates by small hash found.")
     return source_matches, files_by_small_hash
 
 
-def find_duplicates_by_full_hash(source_files, files_by_small_hash):
+def find_duplicates_by_full_hash(source_files, files_by_small_hash, pool):
     """
     Finds duplicate files based on their full hash values.
 
     :param source_files: List of source file paths.
     :param files_by_small_hash: Dictionary of files grouped by small hash.
+    :param pool: ThreadPool for parallel processing.
     :return: A tuple containing source matches, source by filename, and a dictionary of files grouped by full hash.
     """
     logger.info("Finding duplicates by full hash.")
-    source_full_hashes = defaultdict(list)
-    source_by_hash = {}
-    source_by_filename = {}
-
     logger.info("Calculating full hashes for source files.")
-    with ThreadPool(parallel_threads) as parallel_pool:
-        for result in parallel_pool.imap(multi_hash, source_files, chunksize=parallel_chunksize):
-            if not result[1]:
-                continue
-            full_hash = base64.b64encode(result[1])
-            source_full_hashes[full_hash].append(result[0])
+    source_full_hashes = generate_hash_list_with_pool(pool, False, source_files, "dict")
 
-    files_by_full_hash = defaultdict(dict)
+    files_by_full_hash = defaultdict(lambda: defaultdict(set))
     logger.info("Calculating full hashes for destination files.")
-    for files in files_by_small_hash.values():
-        if len(files) < 2:
+    for file_size, files in files_by_small_hash.items():
+        if len(files) == 0:
             continue
-        hash_list = []
-        with ThreadPool(parallel_threads) as parallel_pool:
-            for result in parallel_pool.imap(multi_hash, files, chunksize=parallel_chunksize):
-                if not result[1]:
-                    continue
-                full_hash = base64.b64encode(result[1])
-                hash_list.append((result[0], full_hash))
-        for filename, full_hash in hash_list:
-            if full_hash in source_full_hashes:
-                source_by_hash[full_hash] = source_full_hashes[full_hash][0]
-                source_by_filename[source_full_hashes[full_hash][0]] = full_hash
-                files_by_full_hash[full_hash][filename] = None
+        destination_hash_list = set()
+        for destinations in files.values():
+            destination_hashes = generate_hash_list_with_pool(pool, False, destinations)
+            destination_hash_list.update(destination_hashes)
+            source_matches, files_by_full_hash = build_files_by_hash_output(source_full_hashes, destination_hash_list)
 
     logger.info(f"Found {len(files_by_full_hash)} groups of duplicates by full hash.")
-    return source_by_hash, source_by_filename, files_by_full_hash
+    if len(files_by_full_hash) == 0:
+        log_and_raise_error("No duplicates by full hash found.")
+    return source_matches, files_by_full_hash
 
 
 def get_file_inode(file):
@@ -402,79 +444,84 @@ def get_file_inode(file):
     :param file: Path to the file.
     :return: A tuple containing the file path and its inode.
     """
-    logger.debug(f"Getting inode for file: {file}")
-    if not os.path.exists(file):
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Getting inode for file: {file}")
+    if not Path(file).exists():
         logger.warning(f"File does not exist: {file}")
         return file, None
     try:
-        inode = os.stat(file).st_ino
-        logger.debug(f"Inode for file {file}: {inode}")
+        inode = Path(file).stat().st_ino
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Inode for file {file}: {inode}")
         return file, inode
     except OSError as e:
         logger.error(f"Error getting inode for file {file}: {e}")
         return file, None
 
 
-def find_duplicates_by_inode(source_files, files_input, mode):
+def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
     """
     Finds duplicate files based on their inodes.
 
     :param source_files: List of source file paths.
     :param files_input: Dictionary of files grouped by size or hash.
     :param mode: Mode of operation ('combined' or 'inode').
+    :param pool: ThreadPool for parallel processing.
     :return: A tuple containing source matches, source by filename, and a dictionary of files grouped by inode.
     """
-    logger.info(f"Finding duplicates by inode in mode: {mode}")
-    if mode not in ["combined", "inode"]:
-        logger.error("Invalid mode. Accepted modes are: 'combined', 'inode'.")
-        raise ValueError("Invalid mode. Accepted modes are: 'combined', 'inode'.")
+    logger.info("Finding duplicates by inode.")
 
-    source_by_inode = {}
-    source_by_filename = {}
+    source_inodes = defaultdict(set)
     files_by_inode = defaultdict(dict)
+    source_matches = []
 
     logger.info("Getting inodes for source files.")
-    with ThreadPool(parallel_threads) as parallel_pool:
-        for file, inode in parallel_pool.imap_unordered(get_file_inode, source_files, chunksize=parallel_chunksize):
-            if inode is None:
-                continue
-            source_by_inode[inode] = file
-            source_by_filename[file] = inode
+    for file, inode in pool.imap_unordered(
+        get_file_inode, source_files, chunksize=args.parallel_chunksize
+    ):
+        if inode is None:
+            continue
+        source_inodes[inode].add(file)
 
     logger.info("Getting inodes for destination files.")
     if mode == "inode":
         for file_size, files in files_input.items():
-            if len(files) < 2:
+            if len(files) == 0:
                 continue
-            inode_list = []
-            with ThreadPool(parallel_threads) as parallel_pool:
-                for file, inode in parallel_pool.imap_unordered(get_file_inode, files, chunksize=parallel_chunksize):
+            destination_inode_list = set()
+            for size_matched_files in files.values():
+                if len(size_matched_files) == 0:
+                    continue
+                for file, inode in pool.imap_unordered(get_file_inode, size_matched_files, chunksize=args.parallel_chunksize):
                     if inode is None:
                         continue
-                    inode_list.append((file, inode))
-            for filename, inode in inode_list:
-                if inode in source_by_inode:
-                    if not files_by_inode[inode]:
-                        files_by_inode[inode] = {}
-                    files_by_inode[inode][filename] = None
+                    destination_inode_list.add((file, inode))
+                source_matches, files_by_inode = build_files_by_hash_output(source_inodes, destination_inode_list)
+                # for filename, inode in destination_inode_list:
+                #     if inode in source_inodes:
+                #         if source_file not in source_matches:
+                #             source_matches.append(source_file)
+                #         files_by_inode[inode][source_file].append(filename)
     elif mode == "combined":
-        for files in files_input.values():
-            if len(files) < 2:
+        for file_size, files in files_input.items():
+            if len(files) == 0:
                 continue
-            inode_list = []
-            with ThreadPool(parallel_threads) as parallel_pool:
-                for file, inode in parallel_pool.imap_unordered(get_file_inode, files, chunksize=parallel_chunksize):
-                    if inode is None:
-                        continue
-                    inode_list.append((file, inode))
-            for filename, inode in inode_list:
-                if inode in source_by_inode:
-                    if not files_by_inode[inode]:
-                        files_by_inode[inode] = {}
-                    files_by_inode[inode][filename] = None
-
+            destination_inode_list = set()
+            for file, inode in pool.imap_unordered(
+                get_file_inode, files, chunksize=args.parallel_chunksize
+            ):
+                if inode is None:
+                    continue
+                destination_inode_list.update((file, inode))
+                # inode_list format is [(filename, inode)]
+            source_matches, files_by_inode = build_files_by_hash_output(source_inodes, destination_inode_list)
     logger.info(f"Found {len(files_by_inode)} groups of duplicates by inode.")
-    return source_by_inode, source_by_filename, files_by_inode
+    # source_by_inode format is {inode: filename}
+    # source_by_filename format is {filename: inode}
+    # files_by_inode format is {inode: {filename: None}}
+    if len(files_by_inode) == 0:
+        log_and_raise_error("No duplicates by inode found.")
+    return source_matches, files_by_inode
 
 
 def remove_or_purge_files(delete_list):
@@ -485,96 +532,77 @@ def remove_or_purge_files(delete_list):
     """
     if args.dry_run:
         logger.info("Dry run enabled. The following files would be removed:")
-        for file in delete_list:
-            logger.info(f"File: {file}")
+        [logger.info(f"File: {file}") for file in delete_list]
     else:
         logger.info("Starting file removal process.")
         for file in delete_list:
             try:
-                os.remove(file)
+                Path(file).unlink()
                 logger.info(f"Successfully removed file: {file}")
             except OSError as e:
                 logger.error(f"Failed to remove file {file}: {e}")
 
 
-def print_to_console(source_files, files_by_full_hash):
+def print_to_console(source_matches, files_by_inode_or_hash):
     """
     Prints duplicate files to the console.
 
-    :param source_files: Dictionary mapping hashes to source file paths.
-    :param files_by_full_hash: Dictionary of files grouped by full hash.
+    :param source_matches: List of source files that have duplicates.
+    :param files_by_inode_or_hash: Dictionary mapping inodes or hashes to lists of duplicate files.
     """
+    if not source_matches:
+        log_and_raise_error("No source matches found.")
+    logger.info("Printing source matches to console.")
+    for source_file in source_matches:
+        logger.info(f"Source file: {source_file}")
     logger.info("Printing duplicate files to console.")
-    for source_hash, source_path in source_files.items():
-        try:
-            files_str = "\n".join("- %s" % file for file in files_by_full_hash[source_hash].keys())
-            output_str = f"Duplicate found for {source_path}:\n{files_str}\n"
-            logger.debug(f"Output for {source_path}: {output_str}")
-        except KeyError:
-            output_str = f"No duplicates found for {source_path}\n"
-            logger.debug(f"No duplicates for {source_path}")
+    for source_identifier, matches_by_source in files_by_inode_or_hash.items():
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Source identifier: {source_identifier}")
+        for source_file, matches in matches_by_source.items():
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Source file: {source_file}")
+            for match in matches:
+                logger.info(f"Duplicate found for {source_file}: {match}")
 
 
-def check_for_duplicates():
+def check_for_duplicates(pool):
     """
     Main function to check for duplicate files based on the specified mode.
     Handles the entire process of finding duplicates and performing actions on them.
     """
-    global parallel_threads, parallel_chunksize
-    if args.parallel_threads:
-        parallel_threads = args.parallel_threads
-    if args.parallel_chunksize:
-        parallel_chunksize = args.parallel_chunksize
-
     logger.info("Starting duplicate check process.")
     original_source_files = get_source_files()
 
     logger.info("Finding duplicates by size.")
-    source_files, files_by_size = find_duplicates_by_size(args.destinations)
-    if len(files_by_size) == 0:
-        logger.warning("No duplicates by size found.")
-        raise ValueError("No duplicates by size found.")
+    source_files, files_by_size = find_duplicates_by_size(original_source_files, args.destinations)
 
     if args.mode == "hash":
-        logger.info("Finding duplicates by small hash.")
-        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size)
-        if len(files_by_small_hash) == 0:
-            logger.warning("No duplicates by small hash found.")
-            raise ValueError("No duplicates by small hash found.")
-
-        logger.info("Finding duplicates by full hash.")
-        source_by_inode_or_hash, source_by_filename, files_by_inode_or_hash = find_duplicates_by_full_hash(source_files, files_by_small_hash)
-
+        logger.info("Finding duplicates by match mode hash.")
+        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size, pool)
+        source_matches, files_by_inode_or_hash = find_duplicates_by_full_hash(source_files, files_by_small_hash, pool)
     elif args.mode == "combined":
-        logger.info("Finding duplicates by small hash.")
-        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size)
-        if len(files_by_small_hash) == 0:
-            logger.warning("No duplicates by small hash found.")
-            raise ValueError("No duplicates by small hash found.")
-
-        logger.info("Finding duplicates by inode.")
-        source_by_inode_or_hash, source_by_filename, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_small_hash, mode="combined")
-
+        logger.info("Finding duplicates by match mode combined.")
+        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size, pool)
+        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_small_hash, pool,
+                                                                          mode="combined")
     elif args.mode == "inode":
-        logger.info("Finding duplicates by inode.")
-        source_by_inode_or_hash, source_by_filename, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_size, mode="inode")
-
-    else:
-        logger.error("Invalid mode specified.")
-        raise ValueError("Invalid mode. Accepted modes are: 'hash', 'combined', 'inode'.")
+        logger.info("Finding duplicates by match mode inode.")
+        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_size, pool,
+                                                                          mode="inode")
 
     if len(files_by_inode_or_hash) == 0:
-        logger.warning("No duplicates found.")
-        raise ValueError("No duplicates found.")
+        log_and_raise_error("No duplicates found.")
 
     logger.info("Printing duplicates to console.")
-    print_to_console(source_by_inode_or_hash, files_by_inode_or_hash)
+    print_to_console(source_matches, files_by_inode_or_hash)
 
     if args.remove or args.purge:
         logger.info("Removing or purging duplicate files.")
         delete_list = []
+        logging.info("Files by inode or hash: %s", files_by_inode_or_hash)
         for file in files_by_inode_or_hash:
-            delete_list.append("".join("%s" % filename for filename in file.keys()))
+            delete_list.append("".join("%s" % filename for filename in file.values()))
         if args.purge:
             delete_list.append("".join("%s" % filename for filename in original_source_files))
         remove_or_purge_files(delete_list)
@@ -583,63 +611,314 @@ def check_for_duplicates():
         logger.info(f"Writing duplicates to output file: {args.output}.")
         with open(args.output, 'w') as csvfile:
             csvwriter = csv.writer(csvfile)
-            for source_hash, source_path in source_by_inode_or_hash.items():
-                if len(files_by_inode_or_hash[source_hash]) < 2:
-                    continue
-                for file in files_by_inode_or_hash[source_hash].keys():
-                    csvwriter.writerow([source_path, file])
-            for file in original_source_files:
-                if file not in source_by_filename.keys():
-                    csvwriter.writerow([file, ""])
+            for source_identifier, matches_by_source in files_by_inode_or_hash.items():
+                for source_file, matches in matches_by_source.items():
+                    csvwriter.writerow([source_identifier, source_file, matches])
 
 
-def test_function():
+def generate_test_hash_or_inode_input_output(source_files, destination_files, index_count=1):
+    """
+    Generates a test hash or inode input/output mapping for testing purposes.
+
+    :param source_files: List of source file paths.
+    :param destination_files: List of destination file paths.
+    :param index_count: Number of indices to generate.
+    :return: A dictionary mapping hashes or inodes to lists of source and destination files.
+    """
+    test_hash_or_inode_input_output = defaultdict(lambda: defaultdict(list))
+    logger.info("Generating test hash or inode input/output mapping.")
+    source_count = 0
+    while index_count > 0:
+        for source_file in source_files:
+            source_full_path = Path.joinpath(Path.cwd(), Path(source_file).with_stem(f"{Path(source_file).stem}_{source_count}"))
+            for destination_file in destination_files:
+                destination_full_path = Path.joinpath(
+                    Path.cwd(), Path(destination_file).with_stem(f"{Path(destination_file).stem}_{source_count}")
+                )
+                test_hash_or_inode_input_output[index_count][source_full_path].append(
+                    destination_full_path
+                )
+            source_count += 1
+        index_count -= 1
+    return test_hash_or_inode_input_output
+
+
+def generate_test_hash_or_inode_output_validation_string(
+    index_type, test_hash_or_inode_input_output, index_values=None
+):
+    """
+    Generates a validation string for test hash or inode output.
+
+    :return: A string representing the validation output.
+    """
+    validation_string = defaultdict(lambda: defaultdict(set))
+    match index_type:
+        case "small_hash":
+            index = b'My5ENSKDEvcy9pXariwU03kozg0='
+        case "full_hash":
+            index = b"IhGErg9dviNS5WO6UEDmQ1eHS7Q="
+        case "by_inode":
+            index = "unknown"
+        case _:
+            log_and_raise_error("Invalid index type specified.")
+    source_list = []
+    destination_list = defaultdict(set)
+    for hash_match in test_hash_or_inode_input_output.values():
+        for source, destinations in hash_match.items():
+            source_list.append(source)
+            if index_type == "by_inode":
+                destination_list[source].update(destinations)
+            elif index_type == "full_hash" or index_type == "small_hash":
+                destination_list["all"].update(destinations)
+    if index_type == "by_inode":
+        dict_index = index_values
+    elif index_type == "full_hash" or index_type == "small_hash":
+        dict_index = [index]
+    for identifier in dict_index:
+        for source in source_list:
+            if index_type == "by_inode":
+                source_inode = get_file_inode(source)[1]
+                validation_string[source_inode][source].update(destination_list[source])
+            elif index_type == "full_hash" or index_type == "small_hash":
+                validation_string[identifier][source].update(destination_list["all"])
+    return validation_string
+
+
+def test_folder_file_generator(file, test_string_iterations=1, link_type=None, link_target=None):
+    """
+    Creates a directory structure and writes test content to the file.
+    Optionally creates a hardlink or symlink for inode testing.
+    Returns separate lists of created files and directories.
+
+    :param file: Path to the test file.
+    :param test_string_iterations: Number of iterations for the test string.
+    :param link_type: Type of link to create ('hardlink' or 'symlink').
+    :param link_target: Target file for the link.
+    :return: A tuple containing two lists: (created_files, created_dirs).
+    """
+    created_files = []
+    created_dirs = []
+    file_path = Path(file).resolve()
+
+    # Check and create parent directories if they don't exist
+    if not file_path.parent.exists():
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        created_dirs.append(str(file_path.parent))
+
+    if link_type and link_target:
+        link_target_path = Path(link_target).resolve()
+        if not link_target_path.exists():
+            raise ValueError(f"Link target '{link_target}' does not exist.")
+        if link_type == "hardlink":
+            file_path.hardlink_to(link_target_path)
+        elif link_type == "symlink":
+            file_path.symlink_to(link_target_path)
+        else:
+            raise ValueError(f"Invalid link type: {link_type}. Use 'hardlink' or 'symlink'.")
+        created_files.append(str(file_path))
+        logger.debug(f"{link_type.capitalize()} created: {file_path} -> {link_target_path}")
+    else:
+        # Create the file only if it doesn't already exist
+        if not file_path.exists():
+            test_file_contents = "This is a test file." * test_string_iterations
+            with open(file_path, "w") as f:
+                f.write(test_file_contents)
+            created_files.append(str(file_path))
+            logger.debug(f"Test file created: {file_path}")
+
+    return created_files, created_dirs
+
+
+def cleanup_test_files(files, directories):
+    """
+    Cleans up test files and directories.
+    Ensures all files are removed before attempting to remove directories.
+
+    :param files: List of file paths to remove.
+    :param directories: List of directory paths to remove.
+    """
+    logger.info("Cleaning up test files and directories.")
+
+    # Remove files first
+    for file in files:
+        try:
+            file_path = Path(file)
+            if file_path.exists() and file_path.is_file():
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Removing file: {file}")
+                file_path.unlink()
+        except OSError as e:
+            logger.warning(f"Failed to remove file {file}: {e}")
+
+    # Remove directories after files
+    for directory in directories:
+        try:
+            dir_path = Path(directory)
+            if dir_path.exists() and dir_path.is_dir():
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(f"Removing directory: {directory}")
+                dir_path.rmdir()
+        except OSError as e:
+            logger.warning(f"Failed to remove directory {directory}: {e}")
+
+
+def test_function(pool):
     """
     Executes test cases for the specified functions.
     Validates the correctness of the functions using predefined test cases.
     """
     logger.info("Starting test function execution.")
-    test_single_file = "test_file.txt"
     test_mixed_files_dirs = ["test_file1.txt", "test_file2.txt", "test_dir/test_file3.txt"]
+    test_source_files = ["test_source/test_file1.txt", "test_source/test_file2.txt"]
+    test_destinations = ["test_dest/test_file1.txt", "test_dest/test_file2.txt"]
 
     for func in args.functions:
         logger.info(f"Testing function: {func}")
+        created_files = []
+        created_dirs = []
         try:
             match func:
                 case "print_to_console":
-                    source_files = {"abc": "def", "ghi": "jkl"}
-                    files_by_full_hash = {"abc": {"123": None, "456": None}}
-                    eval(func)(source_files, files_by_full_hash)
+                    logger.info("Generating test files for print_to_console.")
+                    for file in test_mixed_files_dirs:
+                        files, dirs = test_folder_file_generator(file)
+                        created_files.extend(files)
+                        created_dirs.extend(dirs)
+                    test_hash_or_inode_input_output = generate_test_hash_or_inode_input_output(test_source_files, test_destinations)
+                    eval(func)(test_mixed_files_dirs, test_hash_or_inode_input_output)
+
                 case "get_hash":
-                    with open(test_single_file, "w") as f:
-                        f.write("This is a test file.")
-                    hash_output = eval(func)(test_single_file, first_chunk_only=True, hash_algo=hashlib.sha1)
-                    logger.debug(f"Hash output: {hash_output}")
-                    if hash_output != b'&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k':
-                        raise ValueError("Hash output does not match expected output.")
+                    files, dirs = test_folder_file_generator(test_mixed_files_dirs[0])
+                    created_files.extend(files)
+                    created_dirs.extend(dirs)
+                    hash_output = eval(func)(
+                        test_mixed_files_dirs[0], first_chunk_only=True, hash_algo=hashlib.sha1
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Hash output: {hash_output}")
+                    if (
+                        hash_output
+                        != b"&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k"
+                    ):
+                        log_and_raise_error("[FAIL] Hash output does not match expected output.")
                     logger.info("[PASS] Hash output matches expected output.")
+
                 case "get_source_files":
                     logger.info("Generating test files for source files.")
-                    test_paths = []
                     for file in test_mixed_files_dirs:
-                        Path(os.path.dirname(file)).mkdir(parents=True, exist_ok=True)
-                        test_paths.append(os.path.join(os.path.dirname(os.path.realpath(__file__)), file))
-                        with open(file, "w") as f:
-                            f.write("This is a test file.")
-                    args.source = test_paths
-                    logger.debug(f"Source files: {eval(func)()}")
+                        files, dirs = test_folder_file_generator(file)
+                        created_files.extend(files)
+                        created_dirs.extend(dirs)
+                    args.source = [Path(file).resolve() for file in test_mixed_files_dirs]
+                    source_files = eval(func)()
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Source files: {source_files}")
+                    if len(source_files) == len(test_mixed_files_dirs):
+                        logger.info("[PASS] Source files length matches expected output.")
+                    else:
+                        log_and_raise_error("[FAIL] Source files length does not match expected output.")
+
+                case "find_duplicates_by_size":
+                    logger.info("Generating test files for find_duplicates_by_size.")
+                    for file in test_source_files + test_destinations:
+                        files, dirs = test_folder_file_generator(file)
+                        created_files.extend(files)
+                        created_dirs.extend(dirs)
+                    args.source = test_source_files
+                    args.destinations = test_destinations
+                    original_source_files = get_source_files()
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Source files: {original_source_files}")
+                    source_matches, files_by_size = eval(func)(
+                        original_source_files, args.destinations
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Source matches: {source_matches}")
+                        logger.debug(f"Files by size: {files_by_size}")
+
+                case (
+                    "find_duplicates_by_small_hash"
+                    | "find_duplicates_by_full_hash"
+                    | "find_duplicates_by_inode"
+                ):
+                    logger.info(f"Generating test files for {func}.")
+                    source_matches = []
+                    index_values = set()
+                    test_hash_or_inode_input_output = generate_test_hash_or_inode_input_output(
+                        test_source_files, test_destinations
+                    )
+                    for hash_match in test_hash_or_inode_input_output.values():
+                        for source, destinations in hash_match.items():
+                            # Generate source files
+                            files, dirs = test_folder_file_generator(source, 100)
+                            created_files.extend(files)
+                            created_dirs.extend(dirs)
+                            if func == "find_duplicates_by_inode":
+                                index_values.add(get_file_inode(source)[1])
+                            for destination in destinations:
+                                # Generate destination files or links
+                                if func == "find_duplicates_by_inode":
+                                    files, dirs = test_folder_file_generator(
+                                        destination, link_type="hardlink", link_target=source
+                                    )
+                                else:
+                                    files, dirs = test_folder_file_generator(destination, 100)
+                                created_files.extend(files)
+                                created_dirs.extend(dirs)
+                            source_matches.append(source)
+
+                    source_matches, files_by_hash_or_inode = eval(func)(
+                        source_matches, test_hash_or_inode_input_output, pool
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Source matches: {source_matches}")
+                        logger.debug(f"Files by {' '.join(func.split('_')[-2:])}: {files_by_hash_or_inode}")
+
+                    validation_string = generate_test_hash_or_inode_output_validation_string(
+                        "_".join(func.split("_")[-2:]), test_hash_or_inode_input_output, index_values
+                    )
+                    if dict(files_by_hash_or_inode) == dict(validation_string):
+                        logger.info("[PASS] Function test output matches generated validation output.")
+                    else:
+                        logger.error("[FAIL] Function test output does not match generated validation output.")
+                        logger.debug(f"Validation Output: {validation_string}")
+                        logger.debug(f"Input Output: {test_hash_or_inode_input_output}")
+
+                case "complete_full_hash":
+                    logger.info("Generating test files for complete flow of size to full hash.")
+                    for file in test_source_files + test_destinations:
+                        files, dirs = test_folder_file_generator(file, 100)
+                        created_files.extend(files)
+                        created_dirs.extend(dirs)
+                    args.source = test_source_files
+                    original_source_files = get_source_files()
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Source files: {original_source_files}")
+                    source_matches, files_by_size = find_duplicates_by_size(original_source_files, test_destinations)
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Files by size: {files_by_size}")
+                    source_matches, files_by_small_hash = find_duplicates_by_small_hash(
+                        source_matches, files_by_size, pool
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Files by small hash: {files_by_small_hash}")
+                    source_matches, files_by_full_hash = find_duplicates_by_full_hash(
+                        source_matches, files_by_small_hash, pool
+                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(f"Files by full hash: {files_by_full_hash}")
+                    validation_string = generate_test_hash_or_inode_output_validation_string(
+                        "full_hash", files_by_full_hash
+                    )
+                    if dict(files_by_full_hash) == dict(validation_string):
+                        logger.info("[PASS] Function test output matches generated validation output.")
+                    else:
+                        logger.error("[FAIL] Function test output does not match generated validation output.")
         except Exception as e:
             logger.error(f"Error while testing function {func}: {e}")
         finally:
-            for file in test_mixed_files_dirs:
-                try:
-                    if os.path.exists(file):
-                        os.remove(file)
-                    os.rmdir(os.path.dirname(file))
-                except OSError:
-                    pass
+            cleanup_test_files(created_files, created_dirs)
     logger.info("Test function execution completed.")
-
 
 
 if __name__ == "__main__":
@@ -648,7 +927,7 @@ if __name__ == "__main__":
         description="Performs a fast duplicate file search in the specified folder(s) "
         "allowing different operations on the duplicates found.",
     )
-    parser.add_argument('--source', '-s',
+    parser.add_argument('--source', '-s', nargs='*',
                         help='Source file/folder(s) to find duplicates of.')
     parser.add_argument('--destinations', '-d', nargs='*',
                         help='Destination file/folder(s) to search for duplicates.')
@@ -670,9 +949,9 @@ if __name__ == "__main__":
                         help="Test mode. Only used with --functions.")
     parser.add_argument("--functions", "-f", nargs="*", 
                         help="Functions to test with --test.")
-    parser.add_argument("--parallel-threads", "-t", type=int, 
+    parser.add_argument("--parallel-threads", "-t", type=int, default=5,
                         help="Number of parallel threads to use.")
-    parser.add_argument('--parallel-chunksize', '-c', type=int,
+    parser.add_argument('--parallel-chunksize', '-c', type=int, default=10,
                         help='Chunk size for parallel processing.')
     args = parser.parse_args()
 
@@ -682,7 +961,13 @@ if __name__ == "__main__":
     logger.info("Logger initialized with environment: %s", args.log_environment or "root")
 
     validate_arguments()
-    if args.test:
-        test_function()
-    else:
-        check_for_duplicates()
+    logger.info("Arguments validated successfully.")
+    logger.info("Opening thread pool with %d threads.", args.parallel_threads)
+    with ThreadPool(args.parallel_threads) as pool:
+        try:
+            if args.test:
+                test_function(pool)
+            else:
+                check_for_duplicates(pool)
+        finally:
+            logger.info("Thread pool closed.")

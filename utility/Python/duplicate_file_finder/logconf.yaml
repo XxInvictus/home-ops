@@ -3,7 +3,7 @@ disable_existing_loggers: False
 
 formatters:
     simple:
-        format: '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        format: '%(asctime)s - %(name)s - %(levelname)6s - %(lineno)4d - %(message)s'
         datefmt: '%Y-%m-%d %H:%M:%S'
 
 handlers:
@@ -17,7 +17,7 @@ handlers:
         class: logging.FileHandler
         level: INFO
         formatter: simple
-        filename: myapp.log
+        filename: duplicate_file_finder.log
         mode: a
 
 loggers:
