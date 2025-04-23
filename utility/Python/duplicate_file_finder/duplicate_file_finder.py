@@ -178,6 +178,7 @@ class ArgumentValidator:
         raise ValueError(message)
 
 
+# noinspection SpellCheckingInspection
 def chunk_reader(fobj, chunk_size=1024):
     """
     Reads a file in chunks of bytes.
@@ -211,10 +212,10 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     # noinspection SpellCheckingInspection
     hashobj = hash_algo()
     try:
-        with open(filename, "rb") as f:
+        with open(filename, "rb") as open_file:
             # Memory-map the file
             # noinspection SpellCheckingInspection
-            with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mmapped_file:
+            with mmap.mmap(open_file.fileno(), length=0, access=mmap.ACCESS_READ) as mmapped_file:
                 if first_chunk_only:
                     hashobj.update(mmapped_file[:1024])  # Hash only the first 1024 bytes
                 else:
@@ -740,8 +741,10 @@ def generate_test_hash_or_inode_output_validation_string(
     validation_string = defaultdict(lambda: defaultdict(set))
     match index_type:
         case "small_hash":
+            # noinspection SpellCheckingInspection
             index = b'My5ENSKDEvcy9pXariwU03kozg0='
         case "full_hash":
+            # noinspection SpellCheckingInspection
             index = b"IhGErg9dviNS5WO6UEDmQ1eHS7Q="
         case "by_inode":
             index = "unknown"
@@ -1093,6 +1096,7 @@ if __name__ == "__main__":
                         help="Functions to test with --test.")
     parser.add_argument("--parallel-threads", "-t", type=int, default=5,
                         help="Number of parallel threads to use.")
+    # noinspection SpellCheckingInspection
     parser.add_argument('--parallel-chunksize', '-c', type=int, default=10,
                         help='Chunk size for parallel processing.')
     parser.add_argument('--filter-by-filetype', action='store_true',
