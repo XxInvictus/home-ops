@@ -27,12 +27,12 @@ import base64
 import csv
 import hashlib
 import mmap
-import yaml
 import logging.config
 from collections import defaultdict
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
+import yaml
 
 # Load the config file
 with open('logconf.yaml', 'rt') as f:
@@ -52,6 +52,9 @@ def log_and_raise_error(message):
 
 
 class ArgumentValidator:
+    """
+    Validates command-line arguments for the duplicate file finder.
+    """
     def __init__(self, validation_args, validation_logger):
         """
         Initializes the ArgumentValidator with arguments and a logger.
@@ -99,7 +102,9 @@ class ArgumentValidator:
             if not path_obj.exists():
                 self._log_and_raise_error(f"{arg_name.capitalize()} path '{path}' does not exist.")
             if not path_obj.is_dir() and not path_obj.is_file():
-                self._log_and_raise_error(f"{arg_name.capitalize()} path '{path}' is not a valid file or directory.")
+                self._log_and_raise_error(
+                    f"{arg_name.capitalize()} path '{path}' is not a valid file or directory."
+                )
 
     def _validate_input(self, arg_name, input_file):
         """
@@ -108,9 +113,13 @@ class ArgumentValidator:
         :param input_file: Path to the input file.
         """
         if not input_file.endswith('.csv'):
-            self._log_and_raise_error(f"{arg_name.capitalize()} file '{input_file}' must have a .csv extension.")
+            self._log_and_raise_error(
+                f"{arg_name.capitalize()} file '{input_file}' must have a .csv extension."
+            )
         if not Path(input_file).is_file():
-            self._log_and_raise_error(f"{arg_name.capitalize()} file '{input_file}' does not exist.")
+            self._log_and_raise_error(
+                f"{arg_name.capitalize()} file '{input_file}' does not exist."
+            )
 
     def _validate_output(self, arg_name, output_file):
         """
@@ -119,7 +128,9 @@ class ArgumentValidator:
         :param output_file: Path to the output file.
         """
         if not output_file.endswith('.csv'):
-            self._log_and_raise_error(f"{arg_name.capitalize()} file '{output_file}' must have a .csv extension.")
+            self._log_and_raise_error(
+                f"{arg_name.capitalize()} file '{output_file}' must have a .csv extension."
+            )
 
     def _validate_functions(self, arg_name, functions):
         """
@@ -167,7 +178,11 @@ class ArgumentValidator:
         """
         valid_environments = ["development", "staging", "production"]
         if environment not in valid_environments:
-            self._log_and_raise_error(f"Invalid {arg_name} '{environment}'. Valid options are: {', '.join(valid_environments)}.")
+            self._log_and_raise_error(
+                f"Invalid {arg_name} '{environment}'. Valid options are: {', '.join(
+                    valid_environments
+                )}."
+            )
 
     def _log_and_raise_error(self, message):
         """
@@ -314,7 +329,11 @@ def traverse_directory(directory, recurse_symlinks=True):
     :param recurse_symlinks: Whether to follow symbolic links.
     :return: List of file paths.
     """
-    return [entry.resolve(strict=True) for entry in Path(directory).rglob('*', recurse_symlinks=recurse_symlinks) if entry.is_file()]
+    return [
+        entry.resolve(strict=True) for entry in Path(directory).rglob(
+            '*', recurse_symlinks=recurse_symlinks
+        ) if entry.is_file()
+    ]
 
 
 def get_source_files():
@@ -431,7 +450,9 @@ def get_source_file_sizes(source_list):
         try:
             source_path = Path(source)
             if source_path.is_file():
-                source_sizes[source_path.stat().st_size].append(str(source_path.resolve(strict=True)))
+                source_sizes[source_path.stat().st_size].append(
+                    str(source_path.resolve(strict=True))
+                )
             elif source_path.is_dir():
                 for entry in traverse_directory(source_path):
                     source_sizes[entry.stat().st_size].append(str(entry))
@@ -454,7 +475,9 @@ def find_duplicates_by_small_hash(source_files, files_by_size, pool):
     # files_by_size syntax is {size: {original: [duplicates]}}
     logger.info("Finding duplicates by small hash.")
     logger.info("Calculating small hashes for source files.")
-    source_small_hashes = generate_hash_list_with_pool(pool, True, source_files, "dict")
+    source_small_hashes = generate_hash_list_with_pool(
+        pool, True, source_files, "dict"
+    )
 
     files_by_small_hash = defaultdict(lambda: defaultdict(set))
     source_matches = []
@@ -467,9 +490,13 @@ def find_duplicates_by_small_hash(source_files, files_by_size, pool):
         for size_matched_files in files.values():
             if len(size_matched_files) == 0:
                 continue
-            destination_hashes = generate_hash_list_with_pool(pool, True, size_matched_files)
+            destination_hashes = generate_hash_list_with_pool(
+                pool, True, size_matched_files
+            )
             destination_hash_list.update(destination_hashes)
-            source_matches, files_by_small_hash = build_files_by_hash_output(source_small_hashes, destination_hash_list)
+            source_matches, files_by_small_hash = build_files_by_hash_output(
+                source_small_hashes, destination_hash_list
+            )
 
     logger.info(
         f"Found {len(files_by_small_hash.items())} groups of duplicates by small hash."
@@ -488,7 +515,8 @@ def find_duplicates_by_full_hash(source_files, files_by_small_hash, pool):
     :param source_files: List of source file paths.
     :param files_by_small_hash: Dictionary of files grouped by small hash.
     :param pool: ThreadPool for parallel processing.
-    :return: A tuple containing source matches, source by filename, and a dictionary of files grouped by full hash.
+    :return: A tuple containing source matches, source by filename,
+        and a dictionary of files grouped by full hash.
     """
     logger.info("Finding duplicates by full hash.")
     logger.info("Calculating full hashes for source files.")
@@ -504,7 +532,9 @@ def find_duplicates_by_full_hash(source_files, files_by_small_hash, pool):
         for destinations in files.values():
             destination_hashes = generate_hash_list_with_pool(pool, False, destinations)
             destination_hash_list.update(destination_hashes)
-            source_matches, files_by_full_hash = build_files_by_hash_output(source_full_hashes, destination_hash_list)
+            source_matches, files_by_full_hash = build_files_by_hash_output(
+                source_full_hashes, destination_hash_list
+            )
 
     logger.info(f"Found {len(files_by_full_hash)} groups of duplicates by full hash.")
     if len(files_by_full_hash) == 0:
@@ -542,7 +572,8 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
     :param files_input: Dictionary of files grouped by size or hash.
     :param mode: Mode of operation ('combined' or 'inode').
     :param pool: ThreadPool for parallel processing.
-    :return: A tuple containing source matches, source by filename, and a dictionary of files grouped by inode.
+    :return: A tuple containing source matches, source by filename,
+        and a dictionary of files grouped by inode.
     """
     logger.info("Finding duplicates by inode.")
 
@@ -568,7 +599,9 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
                 if len(size_matched_files) == 0:
                     continue
                 logger.debug(f"Size matched files: {size_matched_files}")
-                for file, inode in pool.imap_unordered(get_file_inode, size_matched_files, chunksize=args.parallel_chunksize):
+                for file, inode in pool.imap_unordered(
+                        get_file_inode, size_matched_files, chunksize=args.parallel_chunksize
+                ):
                     if inode is None:
                         continue
                     destination_inode_list.add((file, inode))
@@ -576,7 +609,9 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
             for source, destinations in files.items():
                 if len(destinations) == 0:
                     continue
-                normalised_destinations = [Path(destination).resolve(strict=True) for destination in destinations]
+                normalised_destinations = [
+                    Path(destination).resolve(strict=True) for destination in destinations
+                ]
                 destination_inode_list = set()
                 for file, inode in pool.imap_unordered(
                     get_file_inode, normalised_destinations, chunksize=args.parallel_chunksize
@@ -591,7 +626,9 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
 
     if len(destination_inode_list) == 0:
         log_and_raise_error("No destination files found for inode calculation.")
-    source_matches, files_by_inode = build_files_by_hash_output(source_inodes, destination_inode_list)
+    source_matches, files_by_inode = build_files_by_hash_output(
+        source_inodes, destination_inode_list
+    )
     logger.debug(f"Files by inode: {files_by_inode}")
     logger.info(f"Found {len(files_by_inode)} groups of duplicates by inode.")
     # source_by_inode format is {inode: filename}
@@ -661,17 +698,25 @@ def check_for_duplicates(pool):
 
     if args.mode == "hash":
         logger.info("Finding duplicates by match mode hash.")
-        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size, pool)
-        source_matches, files_by_inode_or_hash = find_duplicates_by_full_hash(source_files, files_by_small_hash, pool)
+        source_files, files_by_small_hash = find_duplicates_by_small_hash(
+            source_files, files_by_size, pool
+        )
+        source_matches, files_by_inode_or_hash = find_duplicates_by_full_hash(
+            source_files, files_by_small_hash, pool
+        )
     elif args.mode == "combined":
         logger.info("Finding duplicates by match mode combined.")
-        source_files, files_by_small_hash = find_duplicates_by_small_hash(source_files, files_by_size, pool)
-        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_small_hash, pool,
-                                                                          mode="combined")
+        source_files, files_by_small_hash = find_duplicates_by_small_hash(
+            source_files, files_by_size, pool
+        )
+        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(
+            source_files, files_by_small_hash, pool, mode="combined"
+        )
     elif args.mode == "inode":
         logger.info("Finding duplicates by match mode inode.")
-        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(source_files, files_by_size, pool,
-                                                                          mode="inode")
+        source_matches, files_by_inode_or_hash = find_duplicates_by_inode(
+            source_files, files_by_size, pool, mode="inode"
+        )
     else:
         source_matches = files_by_inode_or_hash = None
         log_and_raise_error("Invalid mode specified. Use 'hash', 'combined', or 'inode'.")
@@ -689,9 +734,9 @@ def check_for_duplicates(pool):
         delete_list = []
         logging.info("Files by inode or hash: %s", files_by_inode_or_hash)
         for file in files_by_inode_or_hash:
-            delete_list.append("".join("%s" % filename for filename in file.values()))
+            delete_list.append("".join(f"{filename}" for filename in file.values()))
         if args.purge:
-            delete_list.append("".join("%s" % filename for filename in original_source_files))
+            delete_list.append("".join(f"{filename}" for filename in original_source_files))
         remove_or_purge_files(delete_list)
 
     if args.output:
@@ -717,10 +762,16 @@ def generate_test_hash_or_inode_input_output(source_files, destination_files, in
     source_count = 0
     while index_count > 0:
         for source_file in source_files:
-            source_full_path = Path.joinpath(Path.cwd(), Path(source_file).with_stem(f"{Path(source_file).stem}_{source_count}"))
+            source_full_path = Path.joinpath(
+                Path.cwd(), Path(source_file).with_stem(
+                    f"{Path(source_file).stem}_{source_count}"
+                )
+            )
             for destination_file in destination_files:
                 destination_full_path = Path.joinpath(
-                    Path.cwd(), Path(destination_file).with_stem(f"{Path(destination_file).stem}_{source_count}")
+                    Path.cwd(), Path(destination_file).with_stem(
+                        f"{Path(destination_file).stem}_{source_count}"
+                    )
                 )
                 test_hash_or_inode_input_output[index_count][source_full_path].append(
                     destination_full_path
@@ -758,11 +809,11 @@ def generate_test_hash_or_inode_output_validation_string(
             source_list.append(source)
             if index_type == "by_inode":
                 destination_list[source].update(destinations)
-            elif index_type == "full_hash" or index_type == "small_hash":
+            elif index_type in ("full_hash", "small_hash"):
                 destination_list["all"].update(destinations)
     if index_type == "by_inode":
         dict_index = index_values
-    elif index_type == "full_hash" or index_type == "small_hash":
+    elif index_type in ("full_hash", "small_hash"):
         dict_index = [index]
     else:
         dict_index = None
@@ -773,7 +824,7 @@ def generate_test_hash_or_inode_output_validation_string(
             if index_type == "by_inode":
                 source_inode = get_file_inode(source)[1]
                 validation_string[source_inode][source].update(destination_list[source])
-            elif index_type == "full_hash" or index_type == "small_hash":
+            elif index_type in ("full_hash", "small_hash"):
                 validation_string[identifier][source].update(destination_list["all"])
     return validation_string
 
@@ -894,7 +945,9 @@ def test_function(pool):
                         files, dirs = test_folder_file_generator(file)
                         created_files.extend(files)
                         created_dirs.extend(dirs)
-                    test_hash_or_inode_input_output = generate_test_hash_or_inode_input_output(test_source_files, test_destinations)
+                    test_hash_or_inode_input_output = generate_test_hash_or_inode_input_output(
+                        test_source_files, test_destinations
+                    )
                     eval(func)(test_mixed_files_dirs, test_hash_or_inode_input_output)
 
                 case "get_hash":
@@ -906,7 +959,11 @@ def test_function(pool):
                     )
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Hash output: {hash_output}")
-                    output_test_results(hash_output == b"&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k", hash_output, b"&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k")
+                    output_test_results(
+                        hash_output == b"&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k",
+                        hash_output,
+                        b"&\xd8/\x191\xcb\xdb\xd8<*hq\xb2\xce\xcd\\\xbc\xc8\xc2k"
+                    )
 
                 case "get_source_files":
                     logger.info("Generating test files for source files.")
@@ -918,7 +975,10 @@ def test_function(pool):
                     source_files = eval(func)()
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Source files: {source_files}")
-                    output_test_results(len(source_files) == len(test_mixed_files_dirs), len(source_files), len(test_mixed_files_dirs))
+                    output_test_results(
+                        len(source_files) == len(test_mixed_files_dirs),
+                        len(source_files), len(test_mixed_files_dirs)
+                    )
 
                 case "find_duplicates_by_size":
                     logger.info("Generating test files for find_duplicates_by_size.")
@@ -974,12 +1034,18 @@ def test_function(pool):
                     )
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Source matches: {source_matches}")
-                        logger.debug(f"Files by {' '.join(func.split('_')[-2:])}: {files_by_hash_or_inode}")
+                        logger.debug(
+                            f"Files by {' '.join(func.split('_')[-2:])}: {files_by_hash_or_inode}"
+                        )
 
                     validation_string = generate_test_hash_or_inode_output_validation_string(
-                        "_".join(func.split("_")[-2:]), test_hash_or_inode_input_output, index_values
+                        "_".join(func.split("_")[-2:]),
+                        test_hash_or_inode_input_output, index_values
                     )
-                    output_test_results(dict(files_by_hash_or_inode) == dict(validation_string), files_by_hash_or_inode, validation_string)
+                    output_test_results(
+                        dict(files_by_hash_or_inode) == dict(validation_string),
+                        files_by_hash_or_inode, validation_string
+                    )
 
                 case "complete_full_hash":
                     logger.info("Generating test files for complete flow of size to full hash.")
@@ -991,7 +1057,9 @@ def test_function(pool):
                     original_source_files = get_source_files()
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Source files: {original_source_files}")
-                    source_matches, files_by_size = find_duplicates_by_size(original_source_files, test_destinations)
+                    source_matches, files_by_size = find_duplicates_by_size(
+                        original_source_files, test_destinations
+                    )
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Files by size: {files_by_size}")
                     source_matches, files_by_small_hash = find_duplicates_by_small_hash(
@@ -1004,8 +1072,13 @@ def test_function(pool):
                     )
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Files by full hash: {files_by_full_hash}")
-                    validation_string = generate_test_hash_or_inode_output_validation_string("full_hash", files_by_full_hash)
-                    output_test_results(dict(files_by_full_hash) == dict(validation_string), files_by_full_hash, validation_string)
+                    validation_string = generate_test_hash_or_inode_output_validation_string(
+                        "full_hash", files_by_full_hash
+                    )
+                    output_test_results(
+                        dict(files_by_full_hash) == dict(validation_string),
+                        files_by_full_hash, validation_string
+                    )
 
                 case "complete_combined_hash_by_inode":
                     logger.info(
@@ -1053,9 +1126,13 @@ def test_function(pool):
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Files by combined: {files_by_inode}")
                     validation_string = generate_test_hash_or_inode_output_validation_string(
-                        "_".join(func.split("_")[-2:]), test_hash_or_inode_input_output, index_values
+                        "_".join(func.split("_")[-2:]),
+                        test_hash_or_inode_input_output, index_values
                     )
-                    output_test_results(dict(files_by_inode) == dict(validation_string), files_by_inode, validation_string)
+                    output_test_results(
+                        dict(files_by_inode) == dict(validation_string),
+                        files_by_inode, validation_string
+                    )
 
         except Exception as e:
             logger.error(f"Error while testing function {func}: {e}")
@@ -1074,7 +1151,8 @@ if __name__ == "__main__":
                         help='Source file/folder(s) to find duplicates of.')
     parser.add_argument('--destinations', '-d', nargs='*',
                         help='Destination file/folder(s) to search for duplicates.')
-    parser.add_argument('--mode', '-m', type=str, choices=['hash', 'combined', 'inode'], default='hash', 
+    parser.add_argument('--mode', '-m', type=str,
+                        choices=['hash', 'combined', 'inode'], default='hash',
                         help='Mode of comparison, inode is recommended for Hardlinks.')
     parser.add_argument('--input', '-i', type=str,
                         help='Input CSV file with list of files to search for duplicates.')
@@ -1087,7 +1165,8 @@ if __name__ == "__main__":
         "--purge", "-p", action="store_true", help="Purge original and duplicates."
     )
     parser.add_argument("--dry-run", "-n", action="store_true", help="Dry run.")
-    parser.add_argument('--log-environment', '-l', type=str, choices=['development', 'staging', 'production'],
+    parser.add_argument('--log-environment', '-l', type=str,
+                        choices=['development', 'staging', 'production'],
                         help='Set the logging environment (development, staging, production).')
     parser.add_argument(
         "--test", action="store_true", help="Test mode. Only used with --functions."
@@ -1100,7 +1179,7 @@ if __name__ == "__main__":
     parser.add_argument('--parallel-chunksize', '-c', type=int, default=10,
                         help='Chunk size for parallel processing.')
     parser.add_argument('--filter-by-filetype', action='store_true',
-                        help='Filter duplicates to include only those with the same file type as the source.')
+                        help='Filter duplicates to only those the same file type as the source.')
     args = parser.parse_args()
 
     # Set the logger based on the --log-environment argument
