@@ -213,6 +213,7 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     try:
         with open(filename, "rb") as f:
             # Memory-map the file
+            # noinspection SpellCheckingInspection
             with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mmapped_file:
                 if first_chunk_only:
                     hashobj.update(mmapped_file[:1024])  # Hash only the first 1024 bytes
