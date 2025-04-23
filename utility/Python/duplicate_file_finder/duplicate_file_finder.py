@@ -26,6 +26,7 @@ import argparse
 import base64
 import csv
 import hashlib
+import mmap
 import yaml
 import logging.config
 from collections import defaultdict
@@ -50,89 +51,130 @@ def log_and_raise_error(message):
     raise ValueError(message)
 
 
-def validate_arguments():
-    """
-    Validates the command-line arguments provided by the user.
-    Ensures that all required arguments are valid and meet the expected criteria.
-    """
-    logger.info("Validating arguments...")
-    if args.source:
-        validate_path(args.source, "source")
-    if args.destinations:
-        validate_path(args.destinations, "destination")
-    if args.input:
-        validate_input()
-    if args.output:
-        validate_output()
-    if args.test:
-        validate_test()
+class ArgumentValidator:
+    def __init__(self, args, logger):
+        """
+        Initializes the ArgumentValidator with arguments and a logger.
+        :param args: Parsed command-line arguments.
+        :param logger: Logger instance for logging messages.
+        """
+        self.args = args
+        self.logger = logger
+        self.validation_rules = {
+            "source": self._validate_path,
+            "destinations": self._validate_path,
+            "input": self._validate_input,
+            "output": self._validate_output,
+            "functions": self._validate_functions,
+            "mode": self._validate_mode,
+            "parallel_threads": self._validate_parallel_threads,
+            "log_environment": self._validate_log_environment,
+        }
+        self.custom_test_cases = [
+            "complete_full_hash",
+            "complete_inode",
+            "combined_hash_inode"
+        ]
 
-    logger.info("All arguments are valid.")
+    def validate(self):
+        """
+        Orchestrates the validation of all arguments based on the defined rules.
+        """
+        self.logger.info("Validating arguments...")
+        for arg_name, validation_method in self.validation_rules.items():
+            arg_value = getattr(self.args, arg_name, None)
+            if arg_value:
+                validation_method(arg_name, arg_value)
+        self.logger.info("All arguments are valid.")
 
+    def _validate_path(self, arg_name, path_list):
+        """
+        Validates a list of paths to ensure they exist and are valid.
+        :param arg_name: Name of the argument being validated.
+        :param path_list: List of paths to validate.
+        """
+        for path in path_list:
+            path_obj = Path(path)
+            if not path_obj.exists():
+                self._log_and_raise_error(f"{arg_name.capitalize()} path '{path}' does not exist.")
+            if not path_obj.is_dir() and not path_obj.is_file():
+                self._log_and_raise_error(f"{arg_name.capitalize()} path '{path}' is not a valid file or directory.")
 
-def validate_path(path_list, path_type):
-    """
-    Validates a list of paths to ensure they exist and are valid.
+    def _validate_input(self, arg_name, input_file):
+        """
+        Validates the input CSV file.
+        :param arg_name: Name of the argument being validated.
+        :param input_file: Path to the input file.
+        """
+        if not input_file.endswith('.csv'):
+            self._log_and_raise_error(f"{arg_name.capitalize()} file '{input_file}' must have a .csv extension.")
+        if not Path(input_file).is_file():
+            self._log_and_raise_error(f"{arg_name.capitalize()} file '{input_file}' does not exist.")
 
-    :param path_list: List of paths to validate.
-    :param path_type: Type of path ('source' or 'destination').
-    """
-    for path in path_list:
-        path_obj = Path(path)
-        if not path_obj.exists():
-            log_and_raise_error(f"{path_type.capitalize()} path '{path}' does not exist.")
-        if not path_obj.is_dir() and not path_obj.is_file():
-            log_and_raise_error(f"{path_type.capitalize()} path '{path}' is not a valid file or directory.")
+    def _validate_output(self, arg_name, output_file):
+        """
+        Validates the output file.
+        :param arg_name: Name of the argument being validated.
+        :param output_file: Path to the output file.
+        """
+        if not output_file.endswith('.csv'):
+            self._log_and_raise_error(f"{arg_name.capitalize()} file '{output_file}' must have a .csv extension.")
 
+    def _validate_functions(self, arg_name, functions):
+        """
+        Validates the test functions provided.
+        :param arg_name: Name of the argument being validated.
+        :param functions: List of function names to validate.
+        """
+        import sys
+        from inspect import getmembers, isfunction
+        valid_functions = [o[0] for o in getmembers(sys.modules[__name__]) if isfunction(o[1])]
+        valid_functions.extend(self.custom_test_cases)
+        if not all(func in valid_functions for func in functions):
+            self._log_and_raise_error(
+                f"One or more {arg_name} are not valid functions."
+            )
 
-def validate_input():
-    """
-    Validates the input CSV file provided in the arguments.
-    Ensures the file exists, has a .csv extension, and contains valid paths.
-    """
-    if args.input:
-        if not args.input.endswith('.csv'):
-            log_and_raise_error(f"Input file '{args.input}' must have a .csv extension.")
-        if not Path(args.input).is_file():
-            log_and_raise_error(f"Input file '{args.input}' does not exist.")
-        with open(args.input, newline='') as csvfile:
-            csvreader = csv.reader(csvfile)
-            for row in csvreader:
-                if len(row) != 1:
-                    log_and_raise_error(f"Input CSV file '{args.input}' must have exactly one column per row.")
-                path = row[0]
-                if not Path(path).exists():
-                    log_and_raise_error(f"Path '{path}' in input CSV does not exist.")
-                if not Path(path).is_dir() and not Path(path).is_file():
-                    log_and_raise_error(f"Path '{path}' in input CSV is not a valid file or directory.")
+    def _validate_mode(self, arg_name, mode):
+        """
+        Validates the mode argument to ensure it is one of the allowed values.
+        :param arg_name: Name of the argument being validated.
+        :param mode: The mode value to validate.
+        """
+        valid_modes = ["hash", "combined", "inode"]
+        if mode not in valid_modes:
+            self._log_and_raise_error(
+                f"Invalid {arg_name} '{mode}'. Valid options are: {', '.join(valid_modes)}."
+            )
 
+    def _validate_parallel_threads(self, arg_name, threads):
+        """
+        Validates the parallel threads argument to ensure it is a positive integer.
+        :param arg_name: Name of the argument being validated.
+        :param threads: The number of threads to validate.
+        """
+        if not isinstance(threads, int) or threads <= 0:
+            self._log_and_raise_error(
+                f"{arg_name.capitalize()} must be a positive integer. Provided: {threads}."
+            )
 
-def validate_output():
-    """
-    Validates the output file provided in the arguments.
-    Ensures the file has a .csv extension.
-    """
-    if args.output and not args.output.endswith('.csv'):
-        log_and_raise_error(f"Output file '{args.output}' must have a .csv extension.")
+    def _validate_log_environment(self, arg_name, environment):
+        """
+        Validates the log environment argument to ensure it is one of the allowed values.
+        :param arg_name: Name of the argument being validated.
+        :param environment: The log environment value to validate.
+        """
+        valid_environments = ["development", "staging", "production"]
+        if environment not in valid_environments:
+            self._log_and_raise_error(f"Invalid {arg_name} '{environment}'. Valid options are: {', '.join(valid_environments)}.")
 
-
-def validate_test():
-    """
-    Validates the test mode arguments.
-    Ensures that functions provided for testing are valid and exist in the script.
-    """
-    import sys
-    from inspect import getmembers, isfunction
-    if logger.isEnabledFor(logging.DEBUG):
-        logger.debug(f"Validating test functions: {args.functions}")
-    if args.test and not args.functions:
-        log_and_raise_error("Test mode requires functions to be provided.")
-    if not all(x in [o[0] for o in getmembers(sys.modules[__name__]) if isfunction(o[1])] + [
-        "complete_full_hash",
-        "complete_combined_inode",
-        "complete_inode"
-    ] for x in args.functions):
-        log_and_raise_error("All functions provided for testing are not valid.")
+    def _log_and_raise_error(self, message):
+        """
+        Logs an error message and raises a ValueError.
+        :param message: The error message to log and raise.
+        """
+        self.logger.error(message)
+        raise ValueError(message)
 
 
 def chunk_reader(fobj, chunk_size=1024):
@@ -156,7 +198,7 @@ def chunk_reader(fobj, chunk_size=1024):
 
 def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     """
-    Calculates the hash of a file.
+    Calculates the hash of a file using memory-mapped files for improved performance.
 
     :param filename: Path to the file.
     :param first_chunk_only: If True, only the first chunk of the file is hashed.
@@ -168,11 +210,12 @@ def get_hash(filename, first_chunk_only=False, hash_algo=hashlib.sha1):
     hashobj = hash_algo()
     try:
         with open(filename, "rb") as f:
-            if first_chunk_only:
-                hashobj.update(f.read(1024))
-            else:
-                for chunk in chunk_reader(f):
-                    hashobj.update(chunk)
+            # Memory-map the file
+            with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mmapped_file:
+                if first_chunk_only:
+                    hashobj.update(mmapped_file[:1024])  # Hash only the first 1024 bytes
+                else:
+                    hashobj.update(mmapped_file)  # Hash the entire file
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Hash calculated successfully for file: {filename}.")
     except OSError as e:
@@ -345,6 +388,31 @@ def find_duplicates_by_size(source_list, destination_list):
 # files_by_size syntax is {size: {original: [duplicates]}}
 
 
+def filter_by_filetype(source_files, files_by_size):
+    """
+    Filters destination files to include only those with the same file type as the source files.
+
+    :param source_files: List of source file paths.
+    :param files_by_size: Dictionary of files grouped by size.
+    :return: A filtered dictionary of files grouped by size with matching file types.
+    """
+    logger.info("Filtering destinations by file type.")
+    filtered_files_by_size = defaultdict(lambda: defaultdict(list))
+
+    for file_size, files in files_by_size.items():
+        for source_file in source_files:
+            source_suffix = Path(source_file).suffix
+            for original, destinations in files.items():
+                filtered_destinations = [
+                    dest for dest in destinations if Path(dest).suffix == source_suffix
+                ]
+                if filtered_destinations:
+                    filtered_files_by_size[file_size][original].extend(filtered_destinations)
+
+    logger.info(f"Filtered {len(filtered_files_by_size)} file groups by file type.")
+    return filtered_files_by_size
+
+
 def get_source_file_sizes(source_list):
     """
     Retrieves file sizes from the source directory.
@@ -497,11 +565,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
                         continue
                     destination_inode_list.add((file, inode))
                 source_matches, files_by_inode = build_files_by_hash_output(source_inodes, destination_inode_list)
-                # for filename, inode in destination_inode_list:
-                #     if inode in source_inodes:
-                #         if source_file not in source_matches:
-                #             source_matches.append(source_file)
-                #         files_by_inode[inode][source_file].append(filename)
     elif mode == "combined":
         for file_size, files in files_input.items():
             if len(files) == 0:
@@ -576,6 +639,10 @@ def check_for_duplicates(pool):
 
     logger.info("Finding duplicates by size.")
     source_files, files_by_size = find_duplicates_by_size(original_source_files, args.destinations)
+
+    if args.filter_by_filetype:
+        logger.info("Filtering duplicates by file type.")
+        files_by_size = filter_by_filetype(source_files, files_by_size)
 
     if args.mode == "hash":
         logger.info("Finding duplicates by match mode hash.")
@@ -937,22 +1004,26 @@ if __name__ == "__main__":
                         help='Input CSV file with list of files to search for duplicates.')
     parser.add_argument('--output', '-o', type=str,
                         help='Output CSV file with list of duplicates.')
-    parser.add_argument('--remove', '-r', action='store_true',
-                        help='Remove duplicates.')
-    parser.add_argument('--purge', '-p', action='store_true',
-                        help='Purge original and duplicates.')
-    parser.add_argument('--dry-run', '-n', action='store_true',
-                        help='Dry run.')
+    parser.add_argument(
+        "--remove", "-r", action="store_true", help="Remove duplicates."
+    )
+    parser.add_argument(
+        "--purge", "-p", action="store_true", help="Purge original and duplicates."
+    )
+    parser.add_argument("--dry-run", "-n", action="store_true", help="Dry run.")
     parser.add_argument('--log-environment', '-l', type=str, choices=['development', 'staging', 'production'],
                         help='Set the logging environment (development, staging, production).')
-    parser.add_argument("--test", action="store_true",
-                        help="Test mode. Only used with --functions.")
-    parser.add_argument("--functions", "-f", nargs="*", 
+    parser.add_argument(
+        "--test", action="store_true", help="Test mode. Only used with --functions."
+    )
+    parser.add_argument("--functions", "-f", nargs="*",
                         help="Functions to test with --test.")
     parser.add_argument("--parallel-threads", "-t", type=int, default=5,
                         help="Number of parallel threads to use.")
     parser.add_argument('--parallel-chunksize', '-c', type=int, default=10,
                         help='Chunk size for parallel processing.')
+    parser.add_argument('--filter-by-filetype', action='store_true',
+                        help='Filter duplicates to include only those with the same file type as the source.')
     args = parser.parse_args()
 
     # Set the logger based on the --log-environment argument
@@ -960,8 +1031,8 @@ if __name__ == "__main__":
         logger = logging.getLogger(args.log_environment)
     logger.info("Logger initialized with environment: %s", args.log_environment or "root")
 
-    validate_arguments()
-    logger.info("Arguments validated successfully.")
+    validator = ArgumentValidator(args, logger)
+    validator.validate()
     logger.info("Opening thread pool with %d threads.", args.parallel_threads)
     with ThreadPool(args.parallel_threads) as pool:
         try:
