@@ -288,7 +288,6 @@ def generate_hash_list_with_pool(pool, first_chunk, input_files, output_format="
 
     if output_format == "dict":
         hash_dict = defaultdict(set)
-        logger.debug(list(hash_set))
         for filename, hash_value in hash_set:
             hash_dict[hash_value].add(Path(filename).resolve(strict=True))
         hash_output = hash_dict
@@ -306,8 +305,6 @@ def build_files_by_hash_output(source_hash_inode_list, destination_hash_inode_li
     :param destination_hash_inode_list: List of destination files with their hashes.
     :return: A dictionary mapping hashes to lists of filenames.
     """
-    logger.debug(source_hash_inode_list)
-    logger.debug(destination_hash_inode_list)
     logger.info("Building files by hash output.")
     files_by_hash_inode = defaultdict(lambda: defaultdict(set))
     source_matches = []
@@ -586,7 +583,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
         if inode is None:
             continue
         source_inodes[inode].add(file)
-    logger.debug(f"Source inodes: {source_inodes}")
 
     logger.info("Getting inodes for destination files.")
     destination_inode_list = set()
@@ -598,7 +594,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
             for size_matched_files in files.values():
                 if len(size_matched_files) == 0:
                     continue
-                logger.debug(f"Size matched files: {size_matched_files}")
                 for file, inode in pool.imap_unordered(
                         get_file_inode, size_matched_files, chunksize=args.parallel_chunksize
                 ):
@@ -620,7 +615,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
                         continue
                     destination_inode_list.add((file, inode))
                     # inode_list format is [(filename, inode)]
-                logger.debug(f"Destination inode list: {destination_inode_list}")
         else:
             log_and_raise_error(f"Invalid mode specified: {mode}. Use 'combined' or 'inode'.")
 
@@ -629,7 +623,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
     source_matches, files_by_inode = build_files_by_hash_output(
         source_inodes, destination_inode_list
     )
-    logger.debug(f"Files by inode: {files_by_inode}")
     logger.info(f"Found {len(files_by_inode)} groups of duplicates by inode.")
     # source_by_inode format is {inode: filename}
     # source_by_filename format is {filename: inode}
@@ -729,14 +722,16 @@ def check_for_duplicates(pool):
     logger.info("Printing duplicates to console.")
     print_to_console(source_matches, files_by_inode_or_hash)
 
-    if args.remove or args.purge:
+    if args.remove_mode:
         logger.info("Removing or purging duplicate files.")
         delete_list = []
-        logging.info("Files by inode or hash: %s", files_by_inode_or_hash)
-        for file in files_by_inode_or_hash:
-            delete_list.append("".join(f"{filename}" for filename in file.values()))
-        if args.purge:
-            delete_list.append("".join(f"{filename}" for filename in original_source_files))
+        if args.remove_mode in ("dest_only", "all"):
+            for _, files in files_by_inode_or_hash.items():
+                delete_list.append("".join(f"{destination}" for _, destination in files.items()))
+        if args.remove_mode in ("source_only", "all"):
+            delete_list.append("".join(f"{source}" for source in original_source_files))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Files to be deleted: {delete_list}")
         remove_or_purge_files(delete_list)
 
     if args.output:
@@ -861,7 +856,8 @@ def test_folder_file_generator(file, test_string_iterations=1, link_type=None, l
         else:
             raise ValueError(f"Invalid link type: {link_type}. Use 'hardlink' or 'symlink'.")
         created_files.append(str(file_path))
-        logger.debug(f"{link_type.capitalize()} created: {file_path} -> {link_target_path}")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"{link_type.capitalize()} created: {file_path} -> {link_target_path}")
     else:
         # Create the file only if it doesn't already exist
         if not file_path.exists():
@@ -869,7 +865,8 @@ def test_folder_file_generator(file, test_string_iterations=1, link_type=None, l
             with open(file_path, "w") as open_file:
                 open_file.write(test_file_contents)
             created_files.append(str(file_path))
-            logger.debug(f"Test file created: {file_path}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Test file created: {file_path}")
 
     return created_files, created_dirs
 
@@ -1159,10 +1156,8 @@ if __name__ == "__main__":
     parser.add_argument('--output', '-o', type=str,
                         help='Output CSV file with list of duplicates.')
     parser.add_argument(
-        "--remove", "-r", action="store_true", help="Remove duplicates."
-    )
-    parser.add_argument(
-        "--purge", "-p", action="store_true", help="Purge original and duplicates."
+        "--remove-mode", "-r", type=str, choices=['source_only', 'dest_only', 'all'],
+        help="File Removal mode of source_only, dest_only, or all."
     )
     parser.add_argument("--dry-run", "-n", action="store_true", help="Dry run.")
     parser.add_argument('--log-environment', '-l', type=str,
