@@ -3,7 +3,10 @@ disable_existing_loggers: False
 
 formatters:
     simple:
-        format: '%(asctime)s - %(name)s - %(levelname)6s - %(lineno)4d - %(message)s'
+        format: '%(asctime)s - %(levelname)6s - %(message)s'
+        datefmt: '%Y-%m-%d %H:%M:%S'
+    detailed:
+        format: '%(asctime)s - %(funcName)50s() - %(levelname)6s - %(lineno)4d - %(message)s'
         datefmt: '%Y-%m-%d %H:%M:%S'
 
 handlers:
@@ -14,16 +17,24 @@ handlers:
         stream: ext://sys.stdout
 
     file:
-        class: logging.FileHandler
+        class: logging.handlers.TimedRotatingFileHandler
         level: INFO
         formatter: simple
-        filename: duplicate_file_finder.log
-        mode: a
+        filename: logs/duplicate_file_finder.log
+        when: 'D'
+        interval: 1
+        backupCount: 20
+
+    console_debug:
+        class: logging.StreamHandler
+        level: DEBUG
+        formatter: detailed
+        stream: ext://sys.stdout
 
 loggers:
     development:
         level: DEBUG
-        handlers: [console]
+        handlers: [console_debug]
         propagate: no
 
     staging:
@@ -37,5 +48,5 @@ loggers:
         propagate: no
 
 root:
-    level: DEBUG
+    level: INFO
     handlers: [console]
