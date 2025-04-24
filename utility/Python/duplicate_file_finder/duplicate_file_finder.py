@@ -343,7 +343,8 @@ def get_source_files():
     if args.source:
         sources = args.source
     elif args.input:
-        logger.info(f"Reading sources from input CSV: {args.input}.")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"Reading sources from input CSV: {args.input}.")
         with open(args.input, newline='') as csvfile:
             csvreader = csv.reader(csvfile)
             sources = [row[0] for row in csvreader]
@@ -361,7 +362,8 @@ def get_source_files():
                 source_files.append(source_path.resolve(strict=True))
         except Exception as e:
             logger.error(f"Failed to get source files from {source}: {e}")
-    logger.info(f"Retrieved {len(source_files)} source files.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Retrieved {len(source_files)} source files.")
     return source_files
 
 
@@ -391,7 +393,7 @@ def find_duplicates_by_size(source_list, destination_list):
                         full_paths.append(full_path.resolve(strict=True))
         except OSError as e:
             logger.warning(f"Failed to access file {destination} for realpath: {e}")
-    logger.info(f"Retrieved {len(full_paths)} destination files for size calculation.")
+    logger.info(f"Retrieved {len(full_paths)} destination files for size comparison.")
     for full_path in full_paths:
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Getting size for file: {full_path}.")
@@ -440,7 +442,8 @@ def get_source_file_sizes(source_list):
 
     :return: A dictionary mapping file sizes to lists of file paths.
     """
-    logger.info("Retrieving file sizes from source directory.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Retrieving file sizes from source directory.")
     source_sizes = defaultdict(list)
 
     for source in source_list:
@@ -576,7 +579,8 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
 
     source_inodes = defaultdict(set)
 
-    logger.info("Getting inodes for source files.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Getting inodes for source files.")
     for file, inode in pool.imap_unordered(
         get_file_inode, source_files, chunksize=args.parallel_chunksize
     ):
@@ -584,7 +588,8 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
             continue
         source_inodes[inode].add(file)
 
-    logger.info("Getting inodes for destination files.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Getting inodes for destination files.")
     destination_inode_list = set()
     for _, files in files_input.items():
         if len(files) == 0:
@@ -632,12 +637,23 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
     return source_matches, files_by_inode
 
 
-def remove_or_purge_files(delete_list):
+def remove_or_purge_files(output_files, source_files):
     """
     Removes or lists files to be deleted based on the --dry-run argument.
 
-    :param delete_list: List of files to be deleted.
+    :param output_files: Dictionary of files grouped by inode or hash.
+    :param source_files: List of source file paths.
     """
+    logger.info("Removing or purging duplicate files.")
+    delete_list = []
+    if args.remove_mode in ("dest_only", "all"):
+        for _, files in output_files.items():
+            delete_list.append("".join(f"{destination}" for _, destination in files.items()))
+    if args.remove_mode in ("source_only", "all"):
+        delete_list.append("".join(f"{source}" for source in source_files))
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Files to be deleted: {delete_list}")
+
     if args.dry_run:
         logger.info("Dry run enabled. The following files would be removed:")
         [logger.info(f"File: {file}") for file in delete_list]
@@ -658,12 +674,14 @@ def print_to_console(source_matches, files_by_inode_or_hash):
     :param source_matches: List of source files that have duplicates.
     :param files_by_inode_or_hash: Dictionary mapping inodes or hashes to lists of duplicate files.
     """
+    logger.info("Printing duplicates to console.")
     if not source_matches:
         log_and_raise_error("No source matches found.")
-    logger.info("Printing source matches to console.")
-    for source_file in source_matches:
-        logger.info(f"Source file: {source_file}")
-    logger.info("Printing duplicate files to console.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("Printing source matches to console.")
+        for source_file in source_matches:
+            logger.debug(f"Source file: {source_file}")
+        logger.debug("Printing duplicate files to console.")
     for source_identifier, matches_by_source in files_by_inode_or_hash.items():
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(f"Source identifier: {source_identifier}")
@@ -682,15 +700,12 @@ def check_for_duplicates(pool):
     logger.info("Starting duplicate check process.")
     original_source_files = get_source_files()
 
-    logger.info("Finding duplicates by size.")
     source_files, files_by_size = find_duplicates_by_size(original_source_files, args.destinations)
 
     if args.filter_by_filetype:
-        logger.info("Filtering duplicates by file type.")
         files_by_size = filter_by_filetype(source_files, files_by_size)
 
     if args.mode == "hash":
-        logger.info("Finding duplicates by match mode hash.")
         source_files, files_by_small_hash = find_duplicates_by_small_hash(
             source_files, files_by_size, pool
         )
@@ -698,7 +713,6 @@ def check_for_duplicates(pool):
             source_files, files_by_small_hash, pool
         )
     elif args.mode == "combined":
-        logger.info("Finding duplicates by match mode combined.")
         source_files, files_by_small_hash = find_duplicates_by_small_hash(
             source_files, files_by_size, pool
         )
@@ -706,7 +720,6 @@ def check_for_duplicates(pool):
             source_files, files_by_small_hash, pool, mode="combined"
         )
     elif args.mode == "inode":
-        logger.info("Finding duplicates by match mode inode.")
         source_matches, files_by_inode_or_hash = find_duplicates_by_inode(
             source_files, files_by_size, pool, mode="inode"
         )
@@ -719,20 +732,10 @@ def check_for_duplicates(pool):
     if len(files_by_inode_or_hash) == 0:
         log_and_raise_error("No duplicates found.")
 
-    logger.info("Printing duplicates to console.")
     print_to_console(source_matches, files_by_inode_or_hash)
 
     if args.remove_mode:
-        logger.info("Removing or purging duplicate files.")
-        delete_list = []
-        if args.remove_mode in ("dest_only", "all"):
-            for _, files in files_by_inode_or_hash.items():
-                delete_list.append("".join(f"{destination}" for _, destination in files.items()))
-        if args.remove_mode in ("source_only", "all"):
-            delete_list.append("".join(f"{source}" for source in original_source_files))
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Files to be deleted: {delete_list}")
-        remove_or_purge_files(delete_list)
+        remove_or_purge_files(files_by_inode_or_hash, original_source_files)
 
     if args.output:
         logger.info(f"Writing duplicates to output file: {args.output}.")
