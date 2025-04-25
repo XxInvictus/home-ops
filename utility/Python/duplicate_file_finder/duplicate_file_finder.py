@@ -1200,7 +1200,7 @@ if __name__ == "__main__":
                         help='Chunk size for parallel processing.')
     parser.add_argument('--filter-by-filetype', action='store_true',
                         help='Filter duplicates to only those the same file type as the source.')
-    parser.add_argument('--parent-check', action = 'store_true',
+    parser.add_argument('--parent-check', '-p', action = 'store_true',
                         help='Check if the parent directory is empty after removing files.')
     args = parser.parse_args()
 
