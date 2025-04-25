@@ -76,7 +76,8 @@ class ArgumentValidator:
         self.custom_test_cases = [
             "complete_full_hash",
             "complete_inode",
-            "complete_combined_hash_by_inode"
+            "complete_combined_hash_by_inode",
+            "complete_full_hash_csv_input"
         ]
 
     def validate(self):
@@ -306,6 +307,9 @@ def build_files_by_hash_output(source_hash_inode_list, destination_hash_inode_li
     :return: A dictionary mapping hashes to lists of filenames.
     """
     logger.info("Building files by hash output.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Source hash inode list: {source_hash_inode_list}")
+        logger.debug(f"Destination hash inode list: {destination_hash_inode_list}")
     files_by_hash_inode = defaultdict(lambda: defaultdict(set))
     source_matches = []
     for filename, destination_hash_inode_value in destination_hash_inode_list:
@@ -315,6 +319,10 @@ def build_files_by_hash_output(source_hash_inode_list, destination_hash_inode_li
                     source_matches.append(source_file)
                 files_by_hash_inode[destination_hash_inode_value][source_file].add(filename)
     logger.info(f"Built {len(files_by_hash_inode)} groups of files by hash.")
+    if len(files_by_hash_inode) == 0:
+        log_and_raise_error("No duplicate output built.")
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(f"Files by hash output: {files_by_hash_inode}")
     return source_matches, files_by_hash_inode
 
 
@@ -335,7 +343,7 @@ def traverse_directory(directory, recurse_symlinks=True):
 
 def get_source_files():
     """
-    Retrieves the list of source files from the provided source path or input CSV file.
+    Retrieves the list of source files from the provided source path or input file.
 
     :return: A list of source file paths.
     """
@@ -344,22 +352,22 @@ def get_source_files():
         sources = args.source
     elif args.input:
         if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(f"Reading sources from input CSV: {args.input}.")
-        with open(args.input, newline='') as csvfile:
-            csvreader = csv.reader(csvfile)
-            sources = [row[0] for row in csvreader]
+            logger.debug(f"Reading sources from input file: {args.input}.")
+        with open(args.input, 'r') as input_file:
+            sources = [line.strip() for line in input_file if line.strip()]
     else:
         sources = None
         log_and_raise_error("No source provided.")
+    logger.info(f"Found {len(sources)} source files/directories.")
 
-    source_files = []
+    source_files = set()
     for source in sources:
         try:
             source_path = Path(source)
             if source_path.is_dir():
-                source_files.extend(traverse_directory(source_path))
+                source_files.update(traverse_directory(source_path))
             elif source_path.is_file():
-                source_files.append(source_path.resolve(strict=True))
+                source_files.add(source_path.resolve(strict=True))
         except Exception as e:
             logger.error(f"Failed to get source files from {source}: {e}")
     if logger.isEnabledFor(logging.DEBUG):
@@ -525,10 +533,10 @@ def find_duplicates_by_full_hash(source_files, files_by_small_hash, pool):
     files_by_full_hash = defaultdict(lambda: defaultdict(set))
     source_matches = []
     logger.info("Calculating full hashes for destination files.")
+    destination_hash_list = set()
     for file_size, files in files_by_small_hash.items():
         if len(files) == 0:
             continue
-        destination_hash_list = set()
         for destinations in files.values():
             destination_hashes = generate_hash_list_with_pool(pool, False, destinations)
             destination_hash_list.update(destination_hashes)
@@ -595,7 +603,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
         if len(files) == 0:
             continue
         if mode == "inode":
-            destination_inode_list = set()
             for size_matched_files in files.values():
                 if len(size_matched_files) == 0:
                     continue
@@ -612,7 +619,6 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
                 normalised_destinations = [
                     Path(destination).resolve(strict=True) for destination in destinations
                 ]
-                destination_inode_list = set()
                 for file, inode in pool.imap_unordered(
                     get_file_inode, normalised_destinations, chunksize=args.parallel_chunksize
                 ):
@@ -646,13 +652,15 @@ def remove_or_purge_files(output_files, source_files):
     :param source_files: List of source file paths.
     """
     logger.info("Removing or purging duplicate files.")
-    delete_list = []
+    delete_list = set()
     if args.remove_mode in ("dest_only", "all"):
         for _, files in output_files.items():
             for _, destinations in files.items():
-                delete_list.append("".join(f"{destination}" for destination in destinations))
+                for destination in destinations:
+                    delete_list.add(destination)
     if args.remove_mode in ("source_only", "all"):
-        delete_list.append("".join(f"{source}" for source in source_files))
+        for source in source_files:
+            delete_list.add(source)
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Files to be deleted: {delete_list}")
 
@@ -896,6 +904,25 @@ def test_folder_file_generator(file, test_string_iterations=1, link_type=None, l
 
     return created_files, created_dirs
 
+def generate_test_input_csv(test_source_files, csv_filename="test_input.csv"):
+    """
+    Generates an input CSV file with one source file per line.
+
+    :param test_source_files: List of source file paths.
+    :param csv_filename: Name of the CSV file to generate.
+    :return: Path to the generated CSV file.
+    """
+    logger.info(f"Generating input CSV file: {csv_filename}")
+    try:
+        with open(csv_filename, mode="w", newline="") as csvfile:
+            csvwriter = csv.writer(csvfile)
+            for source_file in test_source_files:
+                csvwriter.writerow([source_file])
+        logger.info(f"Input CSV file generated successfully: {csv_filename}")
+    except OSError as e:
+        logger.error(f"Failed to generate input CSV file {csv_filename}: {e}")
+        raise
+    return csv_filename
 
 def output_test_results(success = True, actual_output = None, expected_output = None):
     """
@@ -1070,13 +1097,19 @@ def test_function(pool):
                         files_by_hash_or_inode, validation_string
                     )
 
-                case "complete_full_hash":
+                case "complete_full_hash"|"complete_full_hash_csv_input":
                     logger.info("Generating test files for complete flow of size to full hash.")
                     for file in test_source_files + test_destinations:
                         files, dirs = test_folder_file_generator(file, 100)
                         created_files.extend(files)
                         created_dirs.extend(dirs)
-                    args.source = test_source_files
+                    if func == "complete_full_hash_csv_input":
+                        # Generate CSV input file
+                        test_input_csv = generate_test_input_csv(test_source_files)
+                        created_files.extend([Path(test_input_csv).resolve(strict=True)])
+                        args.input = test_input_csv
+                    else:
+                        args.source = test_source_files
                     original_source_files = get_source_files()
                     if logger.isEnabledFor(logging.DEBUG):
                         logger.debug(f"Source files: {original_source_files}")
@@ -1178,7 +1211,7 @@ if __name__ == "__main__":
                         choices=['hash', 'combined', 'inode'], default='hash',
                         help='Mode of comparison, inode is recommended for Hardlinks.')
     parser.add_argument('--input', '-i', type=str,
-                        help='Input CSV file with list of files to search for duplicates.')
+                        help='Input file with a line separated list of files to search for duplicates.')
     parser.add_argument('--output', '-o', type=str,
                         help='Output CSV file with list of duplicates.')
     parser.add_argument(
