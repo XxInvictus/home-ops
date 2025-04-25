@@ -648,7 +648,8 @@ def remove_or_purge_files(output_files, source_files):
     delete_list = []
     if args.remove_mode in ("dest_only", "all"):
         for _, files in output_files.items():
-            delete_list.append("".join(f"{destination}" for _, destination in files.items()))
+            for _, destinations in files.items():
+                delete_list.append("".join(f"{destination}" for destination in destinations))
     if args.remove_mode in ("source_only", "all"):
         delete_list.append("".join(f"{source}" for source in source_files))
     if logger.isEnabledFor(logging.DEBUG):
