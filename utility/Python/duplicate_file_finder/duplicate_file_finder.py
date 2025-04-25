@@ -677,8 +677,8 @@ def remove_or_purge_files(output_files, source_files):
                         # Log files in the parent directory that don't match the file type
                         deleted_file_suffix = file_path.suffix
                         non_matching_files = [
-                            f for f in parent_dir.iterdir()
-                            if f.is_file() and f.suffix != deleted_file_suffix
+                            orphan_file for orphan_file in parent_dir.iterdir()
+                            if orphan_file.is_file() and orphan_file.suffix != deleted_file_suffix
                         ]
                         if non_matching_files:
                             logger.info(
