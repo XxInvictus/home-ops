@@ -667,13 +667,14 @@ def remove_or_purge_files(output_files, source_files):
                 file_path.unlink()
                 logger.info(f"Successfully removed file: {file}")
 
-                if args.parent_check:
+                if args.parent_check_method:
                     # Check if the parent directory is empty
                     parent_dir = file_path.parent
                     if not any(parent_dir.iterdir()):
-                        parent_dir.rmdir()
-                        logger.info(f"Removed empty parent directory: {parent_dir}")
-                    else:
+                        if args.parent_check_method == 'remove_empty':
+                            parent_dir.rmdir()
+                            logger.info(f"Removed empty parent directory: {parent_dir}")
+                    elif args.parent_check_method == 'log_orphan_files':
                         # Log files in the parent directory that don't match the file type
                         deleted_file_suffix = file_path.suffix
                         non_matching_files = [
@@ -1200,8 +1201,8 @@ if __name__ == "__main__":
                         help='Chunk size for parallel processing.')
     parser.add_argument('--filter-by-filetype', action='store_true',
                         help='Filter duplicates to only those the same file type as the source.')
-    parser.add_argument('--parent-check', '-p', action = 'store_true',
-                        help='Check if the parent directory is empty after removing files.')
+    parser.add_argument('--parent-check-method', '-p', type=str, choices=['remove_empty', 'log_orphan_files'],
+                        help='Parent directory check method (remove_empty, list_orphan_files).')
     args = parser.parse_args()
 
     # Set the logger based on the --log-environment argument
