@@ -640,6 +640,7 @@ def find_duplicates_by_inode(source_files, files_input, pool, mode="inode"):
 def remove_or_purge_files(output_files, source_files):
     """
     Removes or lists files to be deleted based on the --dry-run argument.
+    Logs non-matching file types in the parent directory if it isn't empty.
 
     :param output_files: Dictionary of files grouped by inode or hash.
     :param source_files: List of source file paths.
@@ -662,10 +663,30 @@ def remove_or_purge_files(output_files, source_files):
         logger.info("Starting file removal process.")
         for file in delete_list:
             try:
-                Path(file).unlink()
+                file_path = Path(file)
+                file_path.unlink()
                 logger.info(f"Successfully removed file: {file}")
+
+                if args.parent_check:
+                    # Check if the parent directory is empty
+                    parent_dir = file_path.parent
+                    if not any(parent_dir.iterdir()):
+                        parent_dir.rmdir()
+                        logger.info(f"Removed empty parent directory: {parent_dir}")
+                    else:
+                        # Log files in the parent directory that don't match the file type
+                        deleted_file_suffix = file_path.suffix
+                        non_matching_files = [
+                            f for f in parent_dir.iterdir()
+                            if f.is_file() and f.suffix != deleted_file_suffix
+                        ]
+                        if non_matching_files:
+                            logger.info(
+                                f"Parent directory '{parent_dir}' is not empty. "
+                                f"Files with non-matching file types: {', '.join(map(str, non_matching_files))}"
+                            )
             except OSError as e:
-                logger.error(f"Failed to remove file {file}: {e}")
+                logger.error(f"Failed to remove file or directory {file}: {e}")
 
 
 def print_to_console(source_matches, files_by_inode_or_hash):
@@ -1179,6 +1200,8 @@ if __name__ == "__main__":
                         help='Chunk size for parallel processing.')
     parser.add_argument('--filter-by-filetype', action='store_true',
                         help='Filter duplicates to only those the same file type as the source.')
+    parser.add_argument('--parent-check', action = 'store_true',
+                        help='Check if the parent directory is empty after removing files.')
     args = parser.parse_args()
 
     # Set the logger based on the --log-environment argument
