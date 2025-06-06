@@ -696,6 +696,7 @@ def remove_or_purge_files(output_files, source_files):
                             )
             except OSError as e:
                 logger.error(f"Failed to remove file or directory {file}: {e}")
+    logger.info(f"Removed {len(delete_list)} files.")
 
 
 def print_to_console(source_matches, files_by_inode_or_hash):
